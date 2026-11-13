@@ -6,6 +6,7 @@ mod lexer;
 mod parser;
 mod repl;
 mod runtime;
+mod suggest;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
