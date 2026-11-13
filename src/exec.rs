@@ -146,11 +146,7 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
                             prev_out = emit_builtin_output(rt, cmd, bytes, is_last)?;
                         }
                         None => {
-                            if !is_last {
-                                return Err(format!(
-                                    "builtin '{name}' produced no output for the pipe"
-                                ));
-                            }
+                            prev_out = if is_last { None } else { Some(Vec::new()) };
                         }
                     }
                 }

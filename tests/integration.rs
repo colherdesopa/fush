@@ -90,6 +90,18 @@ fn builtin_piped_to_external() {
 }
 
 #[test]
+fn silent_builtin_mid_pipeline_is_empty_stream() {
+    let (out, _, _) = fush("echo hi | true; echo $status");
+    assert_eq!(out, "0\n");
+}
+
+#[test]
+fn set_builtin_mid_pipeline_is_empty_stream() {
+    let (out, _, _) = fush("set x ok | true; echo $x $status");
+    assert_eq!(out, "ok 0\n");
+}
+
+#[test]
 fn pipeline_status_is_last_stage() {
     let (out, _, _) = fush("echo hi | grep -q zzz; echo $status");
     assert_eq!(out, "1\n");
