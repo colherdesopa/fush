@@ -161,21 +161,31 @@ impl Runtime {
             }
             ExprKind::Concat => {
                 let mut word = String::new();
+                let mut saw_multi = false;
                 for part in &e.parts {
                     match part.kind {
                         ExprKind::Literal => word.push_str(&part.text),
                         ExprKind::Var => {
                             let vals = self.env.get(&part.text).unwrap_or_default();
+                            if !e.quoted && vals.len() > 1 {
+                                saw_multi = true;
+                            }
                             word.push_str(&vals.join(" "));
                         }
                         ExprKind::Index => {
                             let vals = self.indexed_values(&part.text, part.index.as_ref().expect("index expr has index"));
+                            if !e.quoted && vals.len() > 1 {
+                                saw_multi = true;
+                            }
                             word.push_str(&vals.join(" "));
                         }
                         ExprKind::CmdSubst => {
                             let out = self.capture_stmts(&part.stmts)?;
-                            let joined = cmdsubst_words(&out).join(" ");
-                            word.push_str(&joined);
+                            let words = cmdsubst_words(&out);
+                            if !e.quoted && words.len() > 1 {
+                                saw_multi = true;
+                            }
+                            word.push_str(&words.join(" "));
                         }
                         QuotedCmdSubst => {
                             let mut out = self.capture_stmts(&part.stmts)?;
@@ -186,9 +196,15 @@ impl Runtime {
                         }
                         ExprKind::Concat => {
                             let words = self.expand(part)?;
+                            if !e.quoted && words.len() > 1 {
+                                saw_multi = true;
+                            }
                             word.push_str(&words.join(" "));
                         }
                     }
+                }
+                if !e.quoted && saw_multi {
+                    return Err(format!("{}: expansion of multi-valued variable in concatenation", e.pos));
                 }
                 Ok(vec![word])
             }
@@ -297,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn concat_joins_var_values_with_spaces() {
+    fn bare_concat_with_multi_word_var_errors() {
         let mut rt = rt_with(&[("x", &["a", "b"])]);
         let e = Expr::concat(
             Default::default(),
@@ -307,7 +323,8 @@ mod tests {
                 Expr::literal(Default::default(), "-post".into()),
             ],
         );
-        assert_eq!(rt.expand(&e).unwrap(), vec!["pre-a b-post"]);
+        let err = rt.expand(&e).unwrap_err();
+        assert!(err.contains("expansion of multi-valued variable in concatenation"));
     }
 
     #[test]

@@ -59,6 +59,39 @@ fn parse_index_int(src: &str, pos: SourcePos) -> Result<isize, ParseError> {
     Ok(parsed)
 }
 
+fn attach_job_chain(target: &mut Option<(ChainOp, Box<Job>)>, op: ChainOp, next: Job) {
+    match target {
+        Some((_, job)) => {
+            if job.chain.is_some() {
+                attach_job_chain(&mut job.chain, op, next);
+            } else {
+                job.chain = Some((op, Box::new(next)));
+            }
+        }
+        None => *target = Some((op, Box::new(next))),
+    }
+}
+
+fn attach_stmt_chain(target: &mut Option<(ChainOp, Box<Stmt>)>, op: ChainOp, next: Stmt) {
+    match target {
+        Some((_, stmt)) => match stmt.as_mut() {
+            Stmt::Job(_) => *target = Some((op, Box::new(next))),
+            Stmt::If { chain, .. }
+            | Stmt::For { chain, .. }
+            | Stmt::While { chain, .. }
+            | Stmt::Switch { chain, .. }
+            | Stmt::Function { chain, .. } => {
+                if chain.is_some() {
+                    attach_stmt_chain(chain, op, next);
+                } else {
+                    *target = Some((op, Box::new(next)));
+                }
+            }
+        },
+        None => *target = Some((op, Box::new(next))),
+    }
+}
+
 impl Parser {
     fn peek(&self) -> &Token {
         &self.toks[self.i]
@@ -100,31 +133,28 @@ impl Parser {
         let mut stmts = Vec::new();
         loop {
             self.skip_terminators();
-            let t = self.peek();
+            let t = self.peek().clone();
             match t.kind {
                 TokKind::Eof | TokKind::RParen => break,
-                TokKind::Word if stop.iter().any(|kw| self.bare_word(t, kw)) => break,
-                TokKind::Word
-                    if (self.bare_word(t, "and") || self.bare_word(t, "or"))
-                        && stmts
-                            .last()
-                            .is_some_and(|s| matches!(s, Stmt::Job(_))) =>
-                {
-                    let op = if self.bare_word(t, "and") {
-                        ChainOp::And
-                    } else {
-                        ChainOp::Or
-                    };
+                TokKind::Word if stop.iter().any(|kw| self.bare_word(&t, kw)) => break,
+                TokKind::Word if (self.bare_word(&t, "and") || self.bare_word(&t, "or")) && !stmts.is_empty() => {
+                    let op = if self.bare_word(&t, "and") { ChainOp::And } else { ChainOp::Or };
                     self.next();
-                    let job = self.parse_job()?;
-                    let Stmt::Job(prev) = stmts.last_mut().expect("checked above") else {
-                        unreachable!()
-                    };
-                    let mut tail: &mut Job = prev;
-                    while tail.chain.is_some() {
-                        tail = tail.chain.as_mut().expect("checked is_some").1.as_mut();
+                    let prev = stmts.last_mut().expect("checked above");
+                    match prev {
+                        Stmt::Job(job) => {
+                            let next = self.parse_job()?;
+                            attach_job_chain(&mut job.chain, op, next);
+                        }
+                        Stmt::If { chain, .. }
+                        | Stmt::For { chain, .. }
+                        | Stmt::While { chain, .. }
+                        | Stmt::Switch { chain, .. }
+                        | Stmt::Function { chain, .. } => {
+                            let next = self.parse_stmt()?;
+                            attach_stmt_chain(chain, op, next);
+                        }
                     }
-                    tail.chain = Some((op, Box::new(job)));
                 }
                 _ => stmts.push(self.parse_stmt()?),
             }
@@ -205,7 +235,7 @@ impl Parser {
 
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
-        Ok(Stmt::Function { name, params, body })
+        Ok(Stmt::Function { name, params, body, chain: None })
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParseError> {
@@ -226,7 +256,7 @@ impl Parser {
         } else {
             self.expect_keyword("end")?;
         }
-        Ok(Stmt::If { cond, then_body, else_body })
+        Ok(Stmt::If { cond, then_body, else_body, chain: None })
     }
 
     fn parse_if_no_end(&mut self) -> Result<Stmt, ParseError> {
@@ -242,7 +272,7 @@ impl Parser {
                 else_body = self.parse_block_start()?;
             }
         }
-        Ok(Stmt::If { cond, then_body, else_body })
+        Ok(Stmt::If { cond, then_body, else_body, chain: None })
     }
 
     fn parse_block_start(&mut self) -> Result<Vec<Stmt>, ParseError> {
@@ -268,14 +298,14 @@ impl Parser {
         }
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
-        Ok(Stmt::For { var, items, body })
+        Ok(Stmt::For { var, items, body, chain: None })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, ParseError> {
         let cond = self.parse_job()?;
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
-        Ok(Stmt::While { cond, body })
+        Ok(Stmt::While { cond, body, chain: None })
     }
 
     fn parse_switch(&mut self) -> Result<Stmt, ParseError> {
@@ -301,7 +331,7 @@ impl Parser {
             let body = self.parse_block_start()?;
             cases.push(Case { patterns, body });
         }
-        Ok(Stmt::Switch { value, cases })
+        Ok(Stmt::Switch { value, cases, chain: None })
     }
 
     fn parse_job(&mut self) -> Result<Job, ParseError> {
@@ -415,7 +445,9 @@ impl Parser {
                 for p in &t.parts {
                     self.push_part(t.pos, p, &mut parts)?;
                 }
-                Ok(Expr::concat(t.pos, parts))
+                let mut expr = Expr::concat(t.pos, parts);
+                expr.quoted = t.parts.iter().any(|p| p.quote.is_some());
+                Ok(expr)
             }
             _ => Err(self.unexpected("a word")),
         }
@@ -600,7 +632,7 @@ mod tests {
     #[test]
     fn if_else_end() {
         let stmts = parse_ok("if test $x = 1; echo yes; else; echo no; end").stmts;
-        let Stmt::If { cond, then_body, else_body } = &stmts[0] else { panic!() };
+        let Stmt::If { cond, then_body, else_body, .. } = &stmts[0] else { panic!() };
         assert_eq!(lit(&cond.pipeline[0].args[0]), "test");
         assert_eq!(then_body.len(), 1);
         assert_eq!(else_body.len(), 1);
@@ -630,7 +662,7 @@ mod tests {
     #[test]
     fn for_loop() {
         let stmts = parse_ok("for f in *.txt $files; echo $f; end").stmts;
-        let Stmt::For { var, items, body } = &stmts[0] else { panic!() };
+        let Stmt::For { var, items, body, .. } = &stmts[0] else { panic!() };
         assert_eq!(var, "f");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].kind, ExprKind::Literal);
@@ -832,7 +864,7 @@ mod tests {
     #[test]
     fn function_definition_parses() {
         let p = parse_ok("function greet --description x\n  echo hi\nend");
-        let Stmt::Function { name, params, body } = &p.stmts[0] else { panic!() };
+        let Stmt::Function { name, params, body, .. } = &p.stmts[0] else { panic!() };
         assert_eq!(name, "greet");
         assert_eq!(params, &["--description", "x"]);
         assert_eq!(body.len(), 1);

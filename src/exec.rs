@@ -18,7 +18,7 @@ pub fn run_program(rt: &mut Runtime, stmts: &[Stmt]) -> i32 {
 pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
     match stmt {
         Stmt::Job(job) => run_job(rt, job),
-        Stmt::If { cond, then_body, else_body } => {
+        Stmt::If { cond, then_body, else_body, .. } => {
             run_job(rt, cond)?;
             if rt.status == 0 {
                 run_stmts(rt, then_body)
@@ -26,7 +26,7 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
                 run_stmts(rt, else_body)
             }
         }
-        Stmt::For { var, items, body } => {
+        Stmt::For { var, items, body, .. } => {
             let mut words = Vec::new();
             for item in items {
                 words.extend(rt.expand(item)?);
@@ -45,7 +45,7 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
             rt.env.pop_scope();
             result
         }
-        Stmt::While { cond, body } => loop {
+        Stmt::While { cond, body, .. } => loop {
             run_job(rt, cond)?;
             if rt.status != 0 || rt.exited.is_some() {
                 break Ok(());
@@ -55,7 +55,7 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
                 break Ok(());
             }
         },
-        Stmt::Switch { value, cases } => {
+        Stmt::Switch { value, cases, .. } => {
             let v = rt.expand_one(value)?;
             for case in cases {
                 for pat in &case.patterns {
@@ -67,7 +67,7 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
             }
             Ok(())
         }
-        Stmt::Function { name, params, body } => {
+        Stmt::Function { name, params, body, .. } => {
             rt.register_function(name, params.clone(), body.clone());
             Ok(())
         }
@@ -185,7 +185,7 @@ mod tests {
             pipeline: vec![command(vec![lit("echo"), var("argv")])],
             chain: None,
         })];
-        let mut stmts = vec![Stmt::Function { name: "greet".to_string(), params: vec![], body: body.clone() }];
+        let mut stmts = vec![Stmt::Function { name: "greet".to_string(), params: vec![], body: body.clone(), chain: None }];
         stmts.push(Stmt::Job(Job {
             negated: false,
             pipeline: vec![command(vec![lit("greet"), lit("hello"), lit("there")])],
@@ -210,7 +210,7 @@ mod tests {
                 chain: None,
             }),
         ];
-        let stmt = Stmt::Function { name: "done".to_string(), params: vec![], body };
+        let stmt = Stmt::Function { name: "done".to_string(), params: vec![], body, chain: None };
         let call = Stmt::Job(Job {
             negated: false,
             pipeline: vec![command(vec![lit("done")])],
@@ -228,7 +228,7 @@ mod tests {
             pipeline: vec![command(vec![lit("loop")])],
             chain: None,
         })];
-        let fn_stmt = Stmt::Function { name: "loop".to_string(), params: vec![], body };
+        let fn_stmt = Stmt::Function { name: "loop".to_string(), params: vec![], body, chain: None };
         let call = Stmt::Job(Job {
             negated: false,
             pipeline: vec![command(vec![lit("loop")])],

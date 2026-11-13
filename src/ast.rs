@@ -74,24 +74,29 @@ pub enum Stmt {
         cond: Job,
         then_body: Vec<Stmt>,
         else_body: Vec<Stmt>,
+        chain: Option<(ChainOp, Box<Stmt>)>,
     },
     For {
         var: String,
         items: Vec<Expr>,
         body: Vec<Stmt>,
+        chain: Option<(ChainOp, Box<Stmt>)>,
     },
     While {
         cond: Job,
         body: Vec<Stmt>,
+        chain: Option<(ChainOp, Box<Stmt>)>,
     },
     Switch {
         value: Expr,
         cases: Vec<Case>,
+        chain: Option<(ChainOp, Box<Stmt>)>,
     },
     Function {
         name: String,
         params: Vec<String>,
         body: Vec<Stmt>,
+        chain: Option<(ChainOp, Box<Stmt>)>,
     },
 }
 
@@ -126,30 +131,31 @@ pub struct Expr {
     pub parts: Vec<Expr>,
     pub stmts: Vec<Stmt>,
     pub index: Option<IndexSpec>,
+    pub quoted: bool,
 }
 
 impl Expr {
     pub fn literal(pos: SourcePos, text: String) -> Expr {
-        Expr { pos, kind: ExprKind::Literal, text, parts: Vec::new(), stmts: Vec::new(), index: None }
+        Expr { pos, kind: ExprKind::Literal, text, parts: Vec::new(), stmts: Vec::new(), index: None, quoted: false }
     }
 
     pub fn var(pos: SourcePos, name: String) -> Expr {
-        Expr { pos, kind: ExprKind::Var, text: name, parts: Vec::new(), stmts: Vec::new(), index: None }
+        Expr { pos, kind: ExprKind::Var, text: name, parts: Vec::new(), stmts: Vec::new(), index: None, quoted: false }
     }
 
     pub fn index(pos: SourcePos, name: String, index: IndexSpec) -> Expr {
-        Expr { pos, kind: ExprKind::Index, text: name, parts: Vec::new(), stmts: Vec::new(), index: Some(index) }
+        Expr { pos, kind: ExprKind::Index, text: name, parts: Vec::new(), stmts: Vec::new(), index: Some(index), quoted: false }
     }
 
     pub fn concat(pos: SourcePos, parts: Vec<Expr>) -> Expr {
-        Expr { pos, kind: ExprKind::Concat, text: String::new(), parts, stmts: Vec::new(), index: None }
+        Expr { pos, kind: ExprKind::Concat, text: String::new(), parts, stmts: Vec::new(), index: None, quoted: false }
     }
 
     pub fn cmd_subst(pos: SourcePos, stmts: Vec<Stmt>) -> Expr {
-        Expr { pos, kind: ExprKind::CmdSubst, text: String::new(), parts: Vec::new(), stmts, index: None }
+        Expr { pos, kind: ExprKind::CmdSubst, text: String::new(), parts: Vec::new(), stmts, index: None, quoted: false }
     }
 
     pub fn quoted_cmd_subst(pos: SourcePos, stmts: Vec<Stmt>) -> Expr {
-        Expr { pos, kind: ExprKind::QuotedCmdSubst, text: String::new(), parts: Vec::new(), stmts, index: None }
+        Expr { pos, kind: ExprKind::QuotedCmdSubst, text: String::new(), parts: Vec::new(), stmts, index: None, quoted: true }
     }
 }
