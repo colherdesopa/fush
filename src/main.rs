@@ -1,5 +1,6 @@
 mod ast;
 mod builtins;
+mod completion;
 mod config;
 mod exec;
 mod highlight;

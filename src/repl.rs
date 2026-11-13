@@ -1,48 +1,55 @@
+use crate::completion::{self, BUILTIN_NAMES, CompletionEngine};
 use crate::{exec, highlight, parser, runtime, suggest::Suggester};
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{Context, Editor, Helper};
+use std::cell::RefCell;
 use std::borrow::Cow;
+use std::rc::Rc;
 use std::io::Write;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
-
-const BUILTIN_NAMES: &[&str] = &[
-    "set",
-    "echo",
-    "cd",
-    "exit",
-    "test",
-    "functions",
-    "return",
-    "abbr",
-    "true",
-    "false",
-];
 
 type FushEditor = Editor<FushHelper, DefaultHistory>;
 
 #[derive(Debug, Clone)]
 pub struct FushHelper {
-    #[allow(dead_code)]
-    builtins: Vec<String>,
+    snapshot: Rc<RefCell<RuntimeSnapshot>>,
     suggester: Suggester,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RuntimeSnapshot {
+    functions: Vec<String>,
+    path_dirs: Vec<PathBuf>,
+}
+
+impl RuntimeSnapshot {
+    fn from_runtime(rt: &runtime::Runtime) -> Self {
+        Self {
+            functions: rt.functions.keys().cloned().collect(),
+            path_dirs: std::env::var_os("PATH")
+                .map(|v| std::env::split_paths(&v).collect())
+                .unwrap_or_default(),
+        }
+    }
 }
 
 impl FushHelper {
     fn new(suggester: Suggester) -> Self {
         Self {
-            builtins: BUILTIN_NAMES
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect(),
+            snapshot: Rc::new(RefCell::new(RuntimeSnapshot::default())),
             suggester,
         }
     }
 
     #[allow(dead_code)]
     fn is_builtin(&self, command: &str) -> bool {
-        self.builtins.iter().any(|name| name == command)
+        BUILTIN_NAMES.contains(&command)
+    }
+
+    fn refresh_snapshot(&self, rt: &runtime::Runtime) {
+        *self.snapshot.borrow_mut() = RuntimeSnapshot::from_runtime(rt);
     }
 
     fn from_history(history: &DefaultHistory) -> Self {
@@ -114,11 +121,19 @@ impl rustyline::completion::Completer for FushHelper {
 
     fn complete(
         &self,
-        _line: &str,
-        _pos: usize,
+        line: &str,
+        pos: usize,
         _ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        Ok((0, Vec::new()))
+        let snapshot = self.snapshot.borrow();
+        let engine = CompletionEngine::new(
+            BUILTIN_NAMES.iter().map(|name| name.to_string()).collect(),
+            snapshot.functions.clone(),
+            snapshot.path_dirs.clone(),
+        );
+        drop(snapshot);
+        let (start, candidates) = engine.complete_line(line, pos, &completion::FsDirSource);
+        Ok((start, candidates))
     }
 }
 
@@ -196,9 +211,15 @@ pub fn run_repl() -> i32 {
                     }
                     let _ = editor.add_history_entry(expanded.as_str());
                 }
+                if let Some(helper) = editor.helper_mut() {
+                    helper.refresh_snapshot(&rt);
+                }
                 match parser::parse(&buffer) {
                     Ok(program) => {
                         let status = exec::run_program(&mut rt, &program.stmts);
+                        if let Some(helper) = editor.helper_mut() {
+                            helper.refresh_snapshot(&rt);
+                        }
                         buffer.clear();
                         if rt.exited.is_some() {
                             save_history_if_possible(&mut editor);
