@@ -21,6 +21,9 @@ pub struct Token {
     pub text: String,
     pub parts: Vec<QuotedPart>,
     pub pos: SourcePos,
+    /// true when any backslash escape was consumed while lexing this
+    /// token, so `e\nd` is distinguishable from a bare `end` keyword
+    pub escaped: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +64,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
         match c {
             ' ' | '\t' | '\r' => bump!(),
             '\n' => {
-                toks.push(Token { kind: TokKind::Newline, text: "\n".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::Newline, text: "\n".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             '#' => {
@@ -70,27 +73,27 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                 }
             }
             '|' => {
-                toks.push(Token { kind: TokKind::Pipe, text: "|".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::Pipe, text: "|".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             ';' => {
-                toks.push(Token { kind: TokKind::Semi, text: ";".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::Semi, text: ";".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             '(' => {
-                toks.push(Token { kind: TokKind::LParen, text: "(".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::LParen, text: "(".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             ')' => {
-                toks.push(Token { kind: TokKind::RParen, text: ")".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::RParen, text: ")".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             '<' => {
-                toks.push(Token { kind: TokKind::Lt, text: "<".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::Lt, text: "<".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             '>' => {
-                toks.push(Token { kind: TokKind::Gt, text: ">".into(), parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::Gt, text: ">".into(), parts: Vec::new(), pos, escaped: false });
                 bump!();
             }
             '0'..='9' if is_fd_redirect(&chars, i) => {
@@ -99,7 +102,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     bump!();
                 }
                 let text: String = chars[start..i].iter().collect();
-                toks.push(Token { kind: TokKind::FdNum, text, parts: Vec::new(), pos });
+                toks.push(Token { kind: TokKind::FdNum, text, parts: Vec::new(), pos, escaped: false });
             }
             '$' => {
                 bump!();
@@ -109,13 +112,14 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                         bump!();
                     }
                     let text: String = chars[start..i].iter().collect();
-                    toks.push(Token { kind: TokKind::Dollar, text, parts: Vec::new(), pos });
+                    toks.push(Token { kind: TokKind::Dollar, text, parts: Vec::new(), pos, escaped: false });
                 } else {
                     toks.push(Token {
                         kind: TokKind::Word,
                         text: "$".into(),
                         parts: vec![QuotedPart { quote: None, text: "$".into(), is_var: false }],
                         pos,
+                        escaped: false,
                     });
                 }
             }
@@ -174,11 +178,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                 if !buf.is_empty() || parts.is_empty() {
                     parts.push(QuotedPart { quote: Some(quote), text: buf, is_var: false });
                 }
-                toks.push(Token { kind: TokKind::Word, text: String::new(), parts, pos });
+                toks.push(Token { kind: TokKind::Word, text: String::new(), parts, pos, escaped: false });
             }
             _ => {
                 let mut parts: Vec<QuotedPart> = Vec::new();
                 let mut buf = String::new();
+                let mut esc = false;
                 loop {
                     if i >= chars.len() || matches!(chars[i], ' ' | '\t' | '\r' | '\n' | '|' | ';' | '(' | ')' | '<' | '>')
                     {
@@ -251,6 +256,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                         bump!();
                         buf.push(chars[i]);
                         bump!();
+                        esc = true;
                         continue;
                     }
                     if ch == '$' {
@@ -280,7 +286,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     parts.push(QuotedPart { quote: None, text: buf, is_var: false });
                 }
                 let text: String = parts.iter().map(|p| p.text.clone()).collect();
-                toks.push(Token { kind: TokKind::Word, text, parts, pos });
+                toks.push(Token { kind: TokKind::Word, text, parts, pos, escaped: esc });
             }
         }
     }
@@ -289,6 +295,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
         text: String::new(),
         parts: Vec::new(),
         pos: SourcePos { line, col },
+        escaped: false,
     });
     Ok(toks)
 }
@@ -406,5 +413,14 @@ mod tests {
         let toks = lex(r"a\|b").unwrap();
         assert_eq!(toks[0].kind, TokKind::Word);
         assert_eq!(toks[0].text, "a|b");
+    }
+
+    #[test]
+    fn escaped_word_is_marked_non_bare() {
+        let toks = lex(r"e\nd").unwrap();
+        assert_eq!(toks[0].text, "end");
+        assert!(toks[0].escaped);
+        let toks = lex("end").unwrap();
+        assert!(!toks[0].escaped);
     }
 }

@@ -78,6 +78,7 @@ impl Parser {
 
     fn bare_word(&self, t: &Token, kw: &str) -> bool {
         t.kind == TokKind::Word
+            && !t.escaped
             && t.parts.len() == 1
             && t.parts[0].quote.is_none()
             && !t.parts[0].is_var
@@ -274,13 +275,13 @@ impl Parser {
         match t.kind {
             TokKind::Dollar => Ok(Expr::var(t.pos, t.text.clone())),
             TokKind::LParen => {
-                if self.peek().kind == TokKind::RParen {
+                let stmts = self.parse_stmts(&[])?;
+                if stmts.is_empty() {
                     return Err(ParseError {
                         message: "empty command substitution, expected a command inside '()'".into(),
                         pos: t.pos,
                     });
                 }
-                let stmts = self.parse_stmts(&[])?;
                 let close = self.peek().clone();
                 if close.kind != TokKind::RParen {
                     return Err(ParseError {
@@ -602,6 +603,48 @@ mod tests {
     #[test]
     fn empty_parens_error() {
         let err = parse("echo ()").unwrap_err();
+        assert_eq!(err.pos.line, 1);
+        assert_eq!(err.pos.col, 6);
+        assert!(err.message.contains("empty command substitution"));
+    }
+
+    #[test]
+    fn escaped_end_does_not_terminate_block() {
+        let mut p = parse_ok("if true\ne\\nd\necho hi\nend");
+        let Stmt::If { then_body, .. } = p.stmts.remove(0) else { panic!() };
+        // the e\nd line is a job inside the if-block, not a terminator
+        assert_eq!(then_body.len(), 2);
+        let Stmt::Job(sub) = &then_body[0] else { panic!() };
+        assert_eq!(lit(&sub.pipeline[0].args[0]), "end");
+        let Stmt::Job(sub) = &then_body[1] else { panic!() };
+        assert_eq!(lit(&sub.pipeline[0].args[0]), "echo");
+        assert_eq!(lit(&sub.pipeline[0].args[1]), "hi");
+    }
+
+    #[test]
+    fn escaped_not_is_command_name() {
+        // the first `not` is a real negation; the escaped no\t is the
+        // command name, not another negation
+        let j = first_job("not no\\t true");
+        assert!(j.negated);
+        assert_eq!(j.pipeline[0].args.len(), 2);
+        assert_eq!(lit(&j.pipeline[0].args[0]), "not");
+        assert_eq!(lit(&j.pipeline[0].args[1]), "true");
+    }
+
+    #[test]
+    fn escaped_if_word_is_condition_job() {
+        // tru\e must not be accepted as the if keyword itself; it is a
+        // plain condition job inside a well-formed if block
+        let mut p = parse_ok("if tru\\e\necho hi\nend");
+        let Stmt::If { cond, then_body, .. } = p.stmts.remove(0) else { panic!() };
+        assert_eq!(lit(&cond.pipeline[0].args[0]), "true");
+        assert_eq!(then_body.len(), 1);
+    }
+
+    #[test]
+    fn empty_cmdsubst_with_newline_error() {
+        let err = parse("echo (\n)").unwrap_err();
         assert_eq!(err.pos.line, 1);
         assert_eq!(err.pos.col, 6);
         assert!(err.message.contains("empty command substitution"));
