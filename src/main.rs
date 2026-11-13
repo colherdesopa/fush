@@ -1,6 +1,7 @@
 mod ast;
 mod builtins;
 mod exec;
+mod highlight;
 mod lexer;
 mod parser;
 mod repl;
