@@ -240,7 +240,7 @@ pub fn run_repl() -> i32 {
 /// fish config into config.fush. Errors are reported and the shell
 /// continues without config.
 fn first_run_prompt() {
-    let fush = crate::config::primary_config_path();
+    let fush = crate::config::primary_config_file();
     let fish = crate::config::fish_config_file();
     if !matches!(
         crate::config::first_run_state(fush.as_deref(), fish.as_deref()),
