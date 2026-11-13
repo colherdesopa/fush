@@ -52,8 +52,13 @@ pub fn save(
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
-    if let Err(e) = std::fs::write(path, text) {
+    let tmp = path.with_extension("tmp");
+    if let Err(e) = std::fs::write(&tmp, &text) {
         let _ = rt;
+        return Err(format!("fush: set: cannot write universals file: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
         return Err(format!("fush: set: cannot write universals file: {e}"));
     }
     Ok(())
@@ -85,7 +90,10 @@ pub fn erase(path: &Path, name: &str) {
     } else {
         text + "\n"
     };
-    let _ = std::fs::write(path, text);
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, &text).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
 }
 
 /// Load universals from `path` into the global env. A line that is not

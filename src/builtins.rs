@@ -222,9 +222,9 @@ fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
             "-U" => universal = true,
             "-e" => erase = true,
             "-Ul" | "-lU" => {
-                return err(
+                return err(&format!(
                     "fush: set: local universal variables are not supported\n{SET_USAGE}",
-                );
+                ));
             }
             "-" | "--" => {
                 rest = &rest[1..];
