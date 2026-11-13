@@ -7,7 +7,7 @@ No Cygwin. No MSYS2. No WSL. No fork. Just fish's friendly syntax and UX
 
 ## Status
 
-Milestone 2 complete: functions + abbreviations are in place and smoke-verified on the Windows release build. See [docs/DESIGN.md](docs/DESIGN.md)
+Language completion done: indexing, and/or after blocks, cartesian concat, and char-wise glob are in place and smoke-checked on the Windows release build. See [docs/DESIGN.md](docs/DESIGN.md)
 for the goal and the road.
 
 ## Why

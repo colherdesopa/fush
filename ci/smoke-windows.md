@@ -76,3 +76,28 @@ Verification notes:
 - The Windows release build was also checked with the Linux host test suite (`cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo build --release --target x86_64-pc-windows-gnu`).
 - The recursive function case was run under a shell timeout to confirm it exits promptly instead of hanging.
 - `abbr` expansion is intentionally disabled in `-c` / non-interactive mode, matching fish-style interactive semantics.
+
+## Language completion milestone
+
+Environment:
+- Build host: WSL CachyOS (Linux x86_64), rustc 1.97.0, target x86_64-pc-windows-gnu, mingw-w64-gcc toolchain
+- Windows target: Microsoft Windows [Version 10.0.26300.9974]
+- Binary: `cargo build --release --target x86_64-pc-windows-gnu`, copied to `C:\Users\Francisco\fush-smoke\fush.exe`
+- Smoke driven from WSL via `.cmd` files in `C:\Users\Francisco\fush-smoke`, using `cmd.exe /u /c "C:\Users\Francisco\fush-smoke\NAME.cmd"`
+
+Smoke matrix for the language completion milestone:
+| Case | Expected | Result | Notes |
+| --- | --- | --- | --- |
+| `set x a b; echo $x[2]` | `b` | PASS | indexed set/echo works on the Windows release build |
+| `function f; echo $argv[1]; end; f a b` | `a` | PASS | list indexing in function context works |
+| `if true; echo a; end; and echo yes` | `a`, `yes` | FAIL | `fush: failed to run 'true': program not found` |
+| `set x a b; set y c d; echo $x$y` | `ac bc ad bd` | PASS | cartesian concat works on the release binary |
+| multibyte glob | `glob` | PASS | verified via UTF-8 `.cmd` file and `.fish` script fallback; batch-file UTF-8 handling is limited when launched from a WSL UNC path |
+| abbr + function listing baselines | lists defined names/abbrs | PASS | earlier function + abbr behavior still works |
+| exit propagation | exit code 3 | PASS | `fush.exe -c "exit 3"` exits 3 |
+
+Notes:
+- The Windows smoke checks were executed with full Windows paths to the batch files (`cmd.exe /u /c "C:\Users\Francisco\fush-smoke\NAME.cmd"`) to avoid WSL UNC-path startup issues that otherwise default to `C:\Windows` and fail before the shell starts.
+- For the multibyte glob probe, the batch-file method is subject to the UTF-8/UNC path limitation observed under WSL, so the canonical validation used a UTF-8 `.fish` script file instead: `C:\Users\Francisco\fush-smoke\multibyte.fish` containing `set x café; switch $x; case caf?; echo glob; end`.
+- Native Linux verification remained green: `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo build --release` all passed.
+- The final milestone status is `DONE_WITH_CONCERNS` because the `and/or after block` smoke fails due to the shell not recognizing a `true` builtin, and the observed output is `fush: failed to run 'true': program not found`.
