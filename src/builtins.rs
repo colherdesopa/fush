@@ -17,8 +17,59 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "cd" => Some(cd(rt, args)),
         "exit" => Some(exit(rt, args)),
         "test" => Some(test(rt, args)),
+        "functions" => Some(functions(rt, args)),
+        "return" => Some(return_builtin(rt, args)),
         _ => None,
     }
+}
+
+fn functions(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        let mut names: Vec<String> = rt.functions.keys().cloned().collect();
+        names.sort();
+        let out = names.join("\n");
+        return BuiltinResult::Done {
+            status: 0,
+            out: if out.is_empty() { None } else { Some(format!("{out}\n").into_bytes()) },
+        };
+    }
+
+    if args.len() != 1 {
+        return err("fush: functions: expected zero or one argument");
+    }
+
+    let name = &args[0];
+    let Some(func) = rt.functions.get(name) else {
+        return BuiltinResult::Done { status: 1, out: Some(format!("function {name}\nend\n").into_bytes()) };
+    };
+    let params = if func.params.is_empty() { String::new() } else { format!(" {}", func.params.join(" ")) };
+    let out = format!("function {name}{params}\nend\n");
+    BuiltinResult::Done { status: 0, out: Some(out.into_bytes()) }
+}
+
+fn return_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    let code = if args.is_empty() {
+        rt.status
+    } else if args.len() == 1 {
+        match args[0].parse::<i32>() {
+            Ok(v) => v,
+            Err(_) => return err(&format!("fush: return: invalid return code '{}'", args[0])),
+        }
+    } else {
+        return err("fush: return: too many arguments");
+    };
+
+    if rt.function_return_stack.is_empty() {
+        rt.status = code;
+        rt.env.set_global("status", vec![code.to_string()]);
+        return BuiltinResult::Done { status: code, out: None };
+    }
+
+    let slot = rt.function_return_stack.last_mut().expect("return inside function");
+    *slot = Some(code);
+    rt.status = code;
+    rt.env.set_global("status", vec![code.to_string()]);
+    BuiltinResult::Done { status: code, out: None }
 }
 
 fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -397,6 +448,31 @@ mod tests {
     fn test_unknown_operator_errors() {
         let mut rt = Runtime::new();
         assert_eq!(status_of(&mut rt, "test", &["a", "-foo", "b"]), 1);
+    }
+
+    #[test]
+    fn functions_lists_names_sorted() {
+        let mut rt = Runtime::new();
+        rt.register_function("zeta", vec![], vec![]);
+        rt.register_function("alpha", vec![], vec![]);
+        match run(&mut rt, "functions", &[]) {
+            Some(BuiltinResult::Done { out: Some(out), .. }) => {
+                assert_eq!(String::from_utf8(out).unwrap(), "alpha\nzeta\n");
+            }
+            _ => panic!("expected functions output"),
+        }
+    }
+
+    #[test]
+    fn builtin_wins_over_function_name() {
+        let mut rt = Runtime::new();
+        rt.register_function("echo", vec![], vec![]);
+        match run(&mut rt, "echo", &args(&["hello"])) {
+            Some(BuiltinResult::Done { out: Some(out), .. }) => {
+                assert_eq!(String::from_utf8(out).unwrap(), "hello\n");
+            }
+            _ => panic!("expected builtin echo output"),
+        }
     }
 
     #[test]

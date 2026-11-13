@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-const BUILTIN_NAMES: &[&str] = &["set", "echo", "cd", "exit", "test"];
+const BUILTIN_NAMES: &[&str] = &["set", "echo", "cd", "exit", "test", "functions", "return"];
 
 type FushEditor = Editor<FushHelper, DefaultHistory>;
 

@@ -67,7 +67,10 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
             }
             Ok(())
         }
-        Stmt::Function { .. } => Ok(()),
+        Stmt::Function { name, params, body } => {
+            rt.register_function(name, params.clone(), body.clone());
+            Ok(())
+        }
     }
 }
 
@@ -75,6 +78,9 @@ pub fn run_stmts(rt: &mut Runtime, stmts: &[Stmt]) -> Result<(), String> {
     for stmt in stmts {
         run_stmt(rt, stmt)?;
         if rt.exited.is_some() {
+            break;
+        }
+        if rt.function_return_stack.last().is_some_and(|slot| slot.is_some()) {
             break;
         }
     }
@@ -120,6 +126,119 @@ fn negate(status: i32) -> i32 {
 /// stages do not run concurrently with builtins; for external-only
 /// pipelines each stage still completes before the next starts, which is
 /// acceptable for the PoC.
+fn call_function(
+    rt: &mut Runtime,
+    _name: &str,
+    func: &crate::runtime::FunctionDef,
+    args: &[String],
+) -> Result<(), String> {
+    if rt.function_depth >= 100 {
+        rt.status = 1;
+        rt.env.set_global("status", vec!["1".to_string()]);
+        eprintln!("function call stack exceeded");
+        return Ok(());
+    }
+
+    rt.function_depth += 1;
+    rt.function_return_stack.push(None);
+    rt.env.push_scope();
+    rt.env.set_local("argv", args.to_vec());
+
+    let result = {
+        let body_result = run_stmts(rt, &func.body);
+        if let Some(return_code) = rt.function_return_stack.last().and_then(|value| *value) {
+            rt.status = return_code;
+        }
+        rt.env.set_global("status", vec![rt.status.to_string()]);
+        body_result
+    };
+
+    rt.env.pop_scope();
+    rt.function_return_stack.pop();
+    rt.function_depth -= 1;
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Command, Expr, Job, Stmt};
+
+    fn lit(value: &str) -> Expr {
+        Expr::literal(Default::default(), value.to_string())
+    }
+
+    fn var(name: &str) -> Expr {
+        Expr::var(Default::default(), name.to_string())
+    }
+
+    fn command(args: Vec<Expr>) -> Command {
+        Command { args, redirects: Vec::new() }
+    }
+
+    #[test]
+    fn function_definition_is_registered_and_called() {
+        let mut rt = Runtime::new();
+        rt.capture = Some(Vec::new());
+        let body = vec![Stmt::Job(Job {
+            negated: false,
+            pipeline: vec![command(vec![lit("echo"), var("argv")])],
+            chain: None,
+        })];
+        let mut stmts = vec![Stmt::Function { name: "greet".to_string(), params: vec![], body: body.clone() }];
+        stmts.push(Stmt::Job(Job {
+            negated: false,
+            pipeline: vec![command(vec![lit("greet"), lit("hello"), lit("there")])],
+            chain: None,
+        }));
+        assert_eq!(run_program(&mut rt, &stmts), 0);
+        assert_eq!(String::from_utf8(rt.capture.take().unwrap()).unwrap(), "hello there\n");
+    }
+
+    #[test]
+    fn function_return_sets_status_and_stops_body() {
+        let mut rt = Runtime::new();
+        let body = vec![
+            Stmt::Job(Job {
+                negated: false,
+                pipeline: vec![command(vec![lit("return"), lit("7")])],
+                chain: None,
+            }),
+            Stmt::Job(Job {
+                negated: false,
+                pipeline: vec![command(vec![lit("echo"), lit("should-not-print")])],
+                chain: None,
+            }),
+        ];
+        let stmt = Stmt::Function { name: "done".to_string(), params: vec![], body };
+        let call = Stmt::Job(Job {
+            negated: false,
+            pipeline: vec![command(vec![lit("done")])],
+            chain: None,
+        });
+        assert_eq!(run_program(&mut rt, &[stmt, call]), 7);
+        assert_eq!(rt.status, 7);
+    }
+
+    #[test]
+    fn recursion_cap_stops_infinite_calls() {
+        let mut rt = Runtime::new();
+        let body = vec![Stmt::Job(Job {
+            negated: false,
+            pipeline: vec![command(vec![lit("loop")])],
+            chain: None,
+        })];
+        let fn_stmt = Stmt::Function { name: "loop".to_string(), params: vec![], body };
+        let call = Stmt::Job(Job {
+            negated: false,
+            pipeline: vec![command(vec![lit("loop")])],
+            chain: None,
+        });
+        assert_eq!(run_program(&mut rt, &[fn_stmt, call]), 1);
+        assert_eq!(rt.status, 1);
+    }
+}
+
 pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Result<i32, String> {
     if pipeline.is_empty() {
         return Ok(rt.status);
@@ -152,6 +271,11 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
                     }
                 }
             }
+        } else if let Some(func) = rt.functions.get(&name).cloned() {
+            call_function(rt, &name, &func, &argv[1..])?;
+            status = rt.status;
+            prev_out = None;
+            last_external_out = None;
         } else {
             let mut command = Child::new(&name);
             command.args(&argv[1..]);

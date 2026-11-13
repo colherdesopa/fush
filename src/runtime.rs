@@ -2,6 +2,13 @@ use crate::ast::{Expr, ExprKind, Stmt};
 use crate::ast::ExprKind::QuotedCmdSubst;
 use crate::exec;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDef {
+    pub params: Vec<String>,
+    pub body: Vec<Stmt>,
+}
 
 /// Variable environment: a global table plus a stack of local scopes.
 /// Lookup checks the innermost local scope first, then globals.
@@ -69,11 +76,26 @@ pub struct Runtime {
     pub status: i32,
     pub exited: Option<i32>,
     pub(crate) capture: Option<Vec<u8>>,
+    pub functions: HashMap<String, Rc<FunctionDef>>,
+    pub function_depth: usize,
+    pub function_return_stack: Vec<Option<i32>>,
 }
 
 impl Runtime {
     pub fn new() -> Runtime {
-        Runtime { env: Env::default(), status: 0, exited: None, capture: None }
+        Runtime {
+            env: Env::default(),
+            status: 0,
+            exited: None,
+            capture: None,
+            functions: HashMap::new(),
+            function_depth: 0,
+            function_return_stack: Vec::new(),
+        }
+    }
+
+    pub fn register_function(&mut self, name: &str, params: Vec<String>, body: Vec<Stmt>) {
+        self.functions.insert(name.to_string(), Rc::new(FunctionDef { params, body }));
     }
 
     /// Expand one Expr into fish-style words.
