@@ -7,7 +7,7 @@ No Cygwin. No MSYS2. No WSL. No fork. Just fish's friendly syntax and UX
 
 ## Status
 
-Language completion done: indexing, and/or after blocks, cartesian concat, and char-wise glob are in place and smoke-checked on the Windows release build. See [docs/DESIGN.md](docs/DESIGN.md)
+Language completion and config done: indexing, and/or after blocks, cartesian concat, char-wise glob, `true`/`false` builtins, config home `%USERPROFILE%\.config\fush` with `config.fish` sourcing, and universal variables (`set -U`) with disk persistence — all smoke-checked on the Windows release build. See [docs/DESIGN.md](docs/DESIGN.md)
 for the goal and the road.
 
 ## Why

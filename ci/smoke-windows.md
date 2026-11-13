@@ -100,4 +100,23 @@ Notes:
 - The Windows smoke checks were executed with full Windows paths to the batch files (`cmd.exe /u /c "C:\Users\Francisco\fush-smoke\NAME.cmd"`) to avoid WSL UNC-path startup issues that otherwise default to `C:\Windows` and fail before the shell starts.
 - For the multibyte glob probe, the batch-file method is subject to the UTF-8/UNC path limitation observed under WSL, so the canonical validation used a UTF-8 `.fish` script file instead: `C:\Users\Francisco\fush-smoke\multibyte.fish` containing `set x café; switch $x; case caf?; echo glob; end`.
 - Native Linux verification remained green: `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo build --release` all passed.
+## Config milestone
+
+Environment: same as the language completion milestone (WSL CachyOS host, rustc 1.97.0, target x86_64-pc-windows-gnu, `C:\Users\Francisco\fush-smoke\fush.exe`, batch files driven via `cmd.exe /c`). The config directory `%USERPROFILE%\.config\fush` had to be created before the config/universals cases; the probe config.fish was deleted after the smoke.
+
+Smoke matrix for the config milestone:
+| Case | Expected | Result | Notes |
+| --- | --- | --- | --- |
+| `true; and echo yes` | `yes` | PASS | `true` is now a builtin — the case that failed as a bad probe in the language milestone |
+| `false; or echo backup` | `backup` | PASS | `false` builtin chains with `or` |
+| config.fish sourced | `fromconfig` | PASS | `config.fish` with `set cfg_greeting fromconfig` in `%USERPROFILE%\.config\fush`; `fush.exe -c "echo $cfg_greeting"` → `fromconfig`; file deleted after the smoke |
+| `set -U` persists across invocations | `hello` | PASS | `fush.exe -c "set -U smoke_uni hello"` then a separate `fush.exe -c "echo $smoke_uni"` → `hello`; universals file `%USERPROFILE%\.config\fush\universals` contains `smoke_uni\thello` |
+| `set -e` erases universally | empty | PASS | after `set -e smoke_uni`, a separate invocation's `echo [$smoke_uni]` prints an empty expansion; universals file emptied |
+| exit propagation | exit code 7 | PASS | `fush.exe -c "exit 7"` → `%ERRORLEVEL%` = 7 |
+
+Notes:
+- Nested quoting through `cmd.exe /c "fush.exe -c \"...\""` from WSL mangles arguments; batch files in the smoke directory remain the reliable driver.
+- `fush` does not create `%USERPROFILE%\.config\fush` on demand; `set -U` fails with os error 3 until the directory exists. First-run creation is a future milestone item.
+- Native Linux verification remained green: `cargo test` (148 unit + 70 integration), `cargo clippy --all-targets -- -D warnings`, `cargo build --release`.
+
 - The original `and/or after block` probe used `true` as the condition command. `true` is not a Windows program (`where true` finds nothing) and not a fush builtin, so the failure was a bad probe, not a shell bug. Re-probed with `if echo a; end; and echo yes` → `a`, `yes` — block chains work on the release build. `true`/`false` builtins are deferred to the next milestone; `test 1 -eq 1` covers the condition-command need today.
