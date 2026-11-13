@@ -33,6 +33,13 @@ impl Env {
         self.globals.insert(name.to_string(), values);
     }
 
+    pub fn remove(&mut self, name: &str) {
+        self.globals.remove(name);
+        for scope in self.locals.iter_mut() {
+            scope.remove(name);
+        }
+    }
+
     pub fn set_local(&mut self, name: &str, values: Vec<String>) {
         if self.locals.is_empty() {
             self.locals.push(HashMap::new());

@@ -8,6 +8,7 @@ mod parser;
 mod repl;
 mod runtime;
 mod suggest;
+mod universal;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -55,6 +56,9 @@ fn main() {
         }
     };
     let mut rt = runtime::Runtime::new();
+    if let Some(path) = universal::universals_file() {
+        universal::load(&mut rt, &path);
+    }
     config::source_config(&mut rt);
     let status = exec::run_program(&mut rt, &program.stmts);
     std::process::exit(status);

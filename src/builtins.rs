@@ -7,7 +7,7 @@ pub enum BuiltinResult {
     Exit(i32),
 }
 
-const SET_USAGE: &str = "usage: set [-l | -x] VARNAME [VALUES...]";
+const SET_USAGE: &str = "usage: set [-l | -U | -x] [-e] VARNAME [VALUES...]";
 
 /// Dispatch to a builtin by name. `args` excludes the builtin name.
 pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResult> {
@@ -212,11 +212,20 @@ fn false_builtin(_rt: &mut Runtime, _args: &[String]) -> BuiltinResult {
 fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     let mut local = false;
     let mut exported = false;
+    let mut universal = false;
+    let mut erase = false;
     let mut rest: &[String] = args;
     while let Some(first) = rest.first() {
         match first.as_str() {
             "-l" => local = true,
             "-x" => exported = true,
+            "-U" => universal = true,
+            "-e" => erase = true,
+            "-Ul" | "-lU" => {
+                return err(
+                    "fush: set: local universal variables are not supported\n{SET_USAGE}",
+                );
+            }
             "-" | "--" => {
                 rest = &rest[1..];
                 break;
@@ -231,21 +240,58 @@ fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     if local && exported {
         return err("fush: set: -l and -x are mutually exclusive");
     }
+    if local && universal {
+        return err("fush: set: local universal variables are not supported\n{SET_USAGE}");
+    }
     let Some(name) = rest.first() else {
         return err(&format!("fush: set: missing variable name\n{SET_USAGE}"));
     };
     let values = rest[1..].to_vec();
+    if erase {
+        rt.env.remove(name);
+        if let Some(path) = crate::universal::universals_file() {
+            crate::universal::erase(&path, name);
+        }
+        return BuiltinResult::Done {
+            status: 0,
+            out: None,
+        };
+    }
     if exported {
-        rt.env.set_global(name, values);
+        rt.env.set_global(name, values.clone());
         rt.env.export(name);
     } else if local {
-        rt.env.set_local(name, values);
+        rt.env.set_local(name, values.clone());
     } else {
-        rt.env.set_global(name, values);
+        rt.env.set_global(name, values.clone());
+    }
+    if universal {
+        let path = match crate::universal::universals_file() {
+            Some(p) => p,
+            None => return err("fush: set: cannot determine universals file path"),
+        };
+        if let Err(e) = crate::universal::save(rt, &path, name, &values) {
+            return err(&e);
+        }
     }
     BuiltinResult::Done {
         status: 0,
         out: None,
+    }
+}
+
+#[cfg(test)]
+fn set_universal_with_path(
+    rt: &mut Runtime,
+    path: &std::path::Path,
+    name: &str,
+    values: &[&str],
+) -> i32 {
+    let values: Vec<String> = values.iter().map(|s| s.to_string()).collect();
+    rt.env.set_global(name, values.clone());
+    match crate::universal::save(rt, path, name, &values) {
+        Ok(()) => 0,
+        Err(_) => 1,
     }
 }
 
@@ -454,6 +500,38 @@ mod tests {
         status_of(&mut rt, "set", &["-x", "FOO", "bar"]);
         assert!(rt.env.is_exported("FOO"));
         assert_eq!(rt.env.get("FOO"), Some(vec!["bar".into()]));
+    }
+
+    #[test]
+    fn set_universal_persists_and_erases() {
+        let dir = std::env::temp_dir().join(format!(
+            "fush-setu-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("universals");
+        let mut rt = Runtime::new();
+        assert_eq!(set_universal_with_path(&mut rt, &path, "x", &["1", "2"]), 0);
+        assert_eq!(rt.env.get("x"), Some(vec!["1".into(), "2".into()]));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "x\t1\t2\n");
+        // Update an existing universal: env + file.
+        assert_eq!(set_universal_with_path(&mut rt, &path, "x", &["9"]), 0);
+        assert_eq!(rt.env.get("x"), Some(vec!["9".into()]));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "x\t9\n");
+        // Erase: env + file (set -e path with the injected universals file).
+        rt.env.remove("x");
+        crate::universal::erase(&path, "x");
+        assert_eq!(rt.env.get("x"), None);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_ul_local_universal_rejected() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "set", &["-Ul", "x", "1"]), 1);
+        assert_eq!(rt.env.get("x"), None);
     }
 
     #[test]

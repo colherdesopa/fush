@@ -169,6 +169,7 @@ pub fn run_repl() -> i32 {
     }
 
     let mut rt = runtime::Runtime::new();
+    load_universals(&mut rt);
     crate::config::source_config(&mut rt);
     let mut buffer = String::new();
     loop {
@@ -235,6 +236,7 @@ pub fn run_repl() -> i32 {
 
 fn run_non_tty_repl() -> i32 {
     let mut rt = runtime::Runtime::new();
+    load_universals(&mut rt);
     crate::config::source_config(&mut rt);
     let mut buffer = String::new();
     loop {
@@ -274,6 +276,12 @@ fn run_non_tty_repl() -> i32 {
                 return 0;
             }
         }
+    }
+}
+
+fn load_universals(rt: &mut runtime::Runtime) {
+    if let Some(path) = crate::universal::universals_file() {
+        crate::universal::load(rt, &path);
     }
 }
 

@@ -598,3 +598,154 @@ fn config_abbr_reaches_tty_repl() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(done.status.code(), Some(0));
 }
+
+fn fush_with_universals(
+    universals: &str,
+    config: Option<&str>,
+    args: &[&str],
+) -> (String, String, i32) {
+    let dir = std::env::temp_dir().join(format!(
+        "fush-uni-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let uni = dir.join("universals");
+    std::fs::write(&uni, universals).expect("write universals");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_fush"));
+    cmd.args(args).env("FUSH_UNIVERSALS", &uni);
+    if let Some(cfg) = config {
+        let cfg_path = dir.join("config.fish");
+        std::fs::write(&cfg_path, cfg).expect("write config");
+        cmd.env("FUSH_CONFIG", &cfg_path);
+    }
+    let out = cmd.output().expect("run fush");
+    let _ = std::fs::remove_dir_all(&dir);
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn universals_visible_in_c_mode() {
+    let (out, err, code) = fush_with_universals("greeting\thello\n", None, &["-c", "echo \"$greeting\""]);
+    assert_eq!(out, "hello\n");
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn universals_multi_value_in_c_mode() {
+    let (out, _, _) = fush_with_universals("list\ta\tb c\td\n", None, &["-c", "echo \"$list\""]);
+    assert_eq!(out, "a b c d\n");
+}
+
+#[test]
+fn universals_load_before_config() {
+    // Config runs after universals load, so config can override a
+    // universal for the session and can see universals set earlier.
+    let (out, _, _) = fush_with_universals(
+        "greeting\thello\n",
+        Some("set greeting goodbye"),
+        &["-c", "echo \"$greeting\""],
+    );
+    assert_eq!(out, "goodbye\n");
+    let (out, _, _) = fush_with_universals(
+        "greeting\thello\n",
+        Some("echo cfg=\"$greeting\""),
+        &["-c", "true"],
+    );
+    assert_eq!(out, "cfg=hello\n");
+}
+
+#[test]
+fn universals_corrupt_lines_skipped_with_one_warning() {
+    let (out, err, code) = fush_with_universals(
+        "good\t1\n\n\tbad\nalsogood\t2\n",
+        None,
+        &["-c", "echo \"$good $alsogood\""],
+    );
+    assert_eq!(out, "1 2\n");
+    assert_eq!(code, 0);
+    assert_eq!(err.matches("fush: warning:").count(), 1);
+    assert!(err.contains("malformed line"));
+}
+
+#[test]
+fn set_u_persists_across_processes() {
+    let dir = std::env::temp_dir().join(format!(
+        "fush-uni-persist-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let uni = dir.join("universals");
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(["-c", "set -U greeting hello multi"])
+        .env("FUSH_UNIVERSALS", &uni)
+        .output()
+        .expect("run fush 1");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(std::fs::read_to_string(&uni).unwrap(), "greeting\thello\tmulti\n");
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(["-c", "echo \"$greeting\""])
+        .env("FUSH_UNIVERSALS", &uni)
+        .output()
+        .expect("run fush 2");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello multi\n");
+}
+
+#[test]
+fn set_e_erases_universal_across_processes() {
+    let dir = std::env::temp_dir().join(format!(
+        "fush-uni-erase-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let uni = dir.join("universals");
+    std::fs::write(&uni, "greeting\thello\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(["-c", "set -e greeting; echo \"gone=$greeting\""])
+        .env("FUSH_UNIVERSALS", &uni)
+        .output()
+        .expect("run fush");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "gone=\n");
+    assert_eq!(std::fs::read_to_string(&uni).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn set_ul_rejected_in_c_mode() {
+    let dir = std::env::temp_dir().join(format!(
+        "fush-uni-ul-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let uni = dir.join("universals");
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(["-c", "set -Ul x 1"])
+        .env("FUSH_UNIVERSALS", &uni)
+        .output()
+        .expect("run fush");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not supported"));
+}
