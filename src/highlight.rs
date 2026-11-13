@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
+
+static EXTERNAL_CACHE: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -143,17 +147,35 @@ pub fn render_ansi(spans: &[(String, Style)]) -> String {
     out
 }
 
-#[allow(dead_code)]
 pub fn is_external(name: &str) -> bool {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return false;
     }
 
+    if let Ok(guard) = EXTERNAL_CACHE.lock()
+        && let Some(cache) = guard.as_ref()
+        && let Some(hit) = cache.get(trimmed)
+    {
+        return *hit;
+    }
+
+    let found = scan_path(trimmed);
+
+    if let Ok(mut guard) = EXTERNAL_CACHE.lock() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(trimmed.to_string(), found);
+    }
+
+    found
+}
+
+fn scan_path(name: &str) -> bool {
     let candidates = if cfg!(windows) {
-        vec![trimmed.to_string(), format!("{trimmed}.exe")]
+        vec![name.to_string(), format!("{name}.exe")]
     } else {
-        vec![trimmed.to_string()]
+        vec![name.to_string()]
     };
 
     let Some(path_var) = std::env::var_os("PATH") else {
@@ -175,6 +197,12 @@ pub fn is_external(name: &str) -> bool {
     false
 }
 
+pub fn reset_external_cache_for_tests() {
+    if let Ok(mut guard) = EXTERNAL_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 fn classify_token(raw: &str, command_pos: bool) -> Style {
     let bare = strip_outer_quotes(raw);
 
@@ -182,7 +210,7 @@ fn classify_token(raw: &str, command_pos: bool) -> Style {
         return Style::Cyan;
     }
 
-    if raw.starts_with('-') && raw.len() > 1 {
+    if is_option(raw) {
         return Style::Magenta;
     }
 
@@ -202,6 +230,14 @@ fn classify_token(raw: &str, command_pos: bool) -> Style {
     }
 
     Style::Default
+}
+
+fn is_option(raw: &str) -> bool {
+    if !raw.starts_with('-') || raw.len() == 1 {
+        return false;
+    }
+    let body = &raw[1..];
+    !body.chars().all(|c| c.is_ascii_digit())
 }
 
 fn next_command_pos(raw: &str, _style: Style) -> bool {
@@ -299,6 +335,41 @@ mod tests {
     fn option_magenta() {
         let spans = highlight("-n");
         assert_eq!(spans, vec![("-n".to_string(), Style::Magenta)]);
+    }
+
+    #[test]
+    fn negative_number_is_not_option() {
+        let spans = highlight("echo -42");
+        assert_eq!(spans[2], ("-42".to_string(), Style::Default));
+    }
+
+    #[test]
+    fn lone_dash_is_not_option() {
+        let spans = highlight("echo -");
+        assert_eq!(spans[1], (" ".to_string(), Style::Default));
+        assert_eq!(spans[2], ("-".to_string(), Style::Default));
+    }
+
+    #[test]
+    fn external_lookup_is_cached() {
+        reset_external_cache_for_tests();
+        assert!(is_external("ls"));
+        assert!(is_external("ls"));
+        assert_eq!(cached("ls"), Some(true));
+        reset_external_cache_for_tests();
+    }
+
+    #[test]
+    fn unknown_external_is_cached_negative() {
+        reset_external_cache_for_tests();
+        assert!(!is_external("definitely_not_a_cmd_xyzzy"));
+        assert_eq!(cached("definitely_not_a_cmd_xyzzy"), Some(false));
+        reset_external_cache_for_tests();
+    }
+
+    fn cached(name: &str) -> Option<bool> {
+        let Ok(guard) = EXTERNAL_CACHE.lock() else { panic!("cache poisoned") };
+        guard.as_ref().and_then(|cache| cache.get(name).copied())
     }
 
     #[test]
