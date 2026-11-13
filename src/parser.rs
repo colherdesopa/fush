@@ -34,6 +34,10 @@ impl Parser {
         let what = match t.kind {
             TokKind::Eof => "end of input".to_string(),
             TokKind::Newline => "newline".to_string(),
+            TokKind::Word if t.text.is_empty() => {
+                let joined: String = t.parts.iter().map(|p| p.text.clone()).collect();
+                format!("'\"{joined}\"'")
+            }
             _ => format!("'{}'", t.text),
         };
         ParseError { message: format!("unexpected {what}, expected {expected}"), pos: t.pos }
@@ -52,7 +56,7 @@ impl Parser {
             let t = self.peek();
             match t.kind {
                 TokKind::Eof | TokKind::RParen => break,
-                TokKind::Word if stop.contains(&t.text.as_str()) => break,
+                TokKind::Word if stop.iter().any(|kw| self.bare_word(t, kw)) => break,
                 _ => stmts.push(self.parse_stmt()?),
             }
         }
@@ -195,12 +199,11 @@ impl Parser {
     }
 
     fn parse_job(&mut self) -> Result<Job, ParseError> {
-        let negated = if self.at_keyword("not") {
+        let mut negated = false;
+        while self.at_keyword("not") {
             self.next();
-            true
-        } else {
-            false
-        };
+            negated = !negated;
+        }
         let mut pipeline = vec![self.parse_command()?];
         while self.peek().kind == TokKind::Pipe {
             self.next();
@@ -271,6 +274,12 @@ impl Parser {
         match t.kind {
             TokKind::Dollar => Ok(Expr::var(t.pos, t.text.clone())),
             TokKind::LParen => {
+                if self.peek().kind == TokKind::RParen {
+                    return Err(ParseError {
+                        message: "empty command substitution, expected a command inside '()'".into(),
+                        pos: t.pos,
+                    });
+                }
                 let stmts = self.parse_stmts(&[])?;
                 let close = self.peek().clone();
                 if close.kind != TokKind::RParen {
@@ -569,6 +578,41 @@ mod tests {
     fn comment_only_line() {
         let p = parse_ok("# just a comment");
         assert!(p.stmts.is_empty());
+    }
+
+    #[test]
+    fn escaped_end_is_plain_argument() {
+        let mut p = parse_ok("if true\n    echo e\\nd\nend");
+        let Stmt::If { then_body, .. } = p.stmts.remove(0) else { panic!() };
+        let Stmt::Job(sub) = &then_body[0] else { panic!() };
+        assert_eq!(lit(&sub.pipeline[0].args[0]), "echo");
+        // the lexer unescapes e\nd to text "end", but it is not a bare
+        // word, so it must not have terminated the if-block
+        assert_eq!(lit(&sub.pipeline[0].args[1]), "end");
+    }
+
+    #[test]
+    fn stacked_not() {
+        let j = first_job("not not true");
+        assert!(!j.negated);
+        let j = first_job("not true");
+        assert!(j.negated);
+    }
+
+    #[test]
+    fn empty_parens_error() {
+        let err = parse("echo ()").unwrap_err();
+        assert_eq!(err.pos.line, 1);
+        assert_eq!(err.pos.col, 6);
+        assert!(err.message.contains("empty command substitution"));
+    }
+
+    #[test]
+    fn quoted_token_error_message() {
+        // a quoted 'end' at case position is not a terminator; the error
+        // must render the quoted text, not an empty token
+        let err = parse("switch x\n'end'").unwrap_err();
+        assert!(err.message.contains("\"end\""), "message: {}", err.message);
     }
 
     #[test]
