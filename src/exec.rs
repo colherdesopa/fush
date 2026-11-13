@@ -67,6 +67,7 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
             }
             Ok(())
         }
+        Stmt::Function { .. } => Ok(()),
     }
 }
 

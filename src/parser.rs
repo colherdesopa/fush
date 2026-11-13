@@ -112,6 +112,10 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        if self.at_keyword("function") {
+            self.next();
+            return self.parse_function();
+        }
         if self.at_keyword("if") {
             self.next();
             return self.parse_if();
@@ -129,6 +133,36 @@ impl Parser {
             return self.parse_switch();
         }
         Ok(Stmt::Job(self.parse_job()?))
+    }
+
+    fn parse_function(&mut self) -> Result<Stmt, ParseError> {
+        let t = self.peek().clone();
+        if t.kind != TokKind::Word
+            || t.escaped
+            || t.parts.len() != 1
+            || t.parts[0].quote.is_some()
+            || t.parts[0].is_var
+        {
+            return Err(ParseError {
+                message: "expected function name".into(),
+                pos: t.pos,
+                incomplete: t.kind == TokKind::Eof,
+            });
+        }
+        let name = self.next().text;
+
+        let mut params = Vec::new();
+        while !matches!(self.peek().kind, TokKind::Newline | TokKind::Semi | TokKind::Eof) {
+            let t = self.peek().clone();
+            match t.kind {
+                TokKind::Word => params.push(self.next().text),
+                _ => break,
+            }
+        }
+
+        let body = self.parse_block_start()?;
+        self.expect_keyword("end")?;
+        Ok(Stmt::Function { name, params, body })
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParseError> {
@@ -715,6 +749,55 @@ mod tests {
         let a = &j.pipeline[0].args[1];
         let Stmt::Job(sub) = &a.stmts[0] else { panic!() };
         assert_eq!(sub.pipeline.len(), 2);
+    }
+
+    #[test]
+    fn function_definition_parses() {
+        let p = parse_ok("function greet --description x\n  echo hi\nend");
+        let Stmt::Function { name, params, body } = &p.stmts[0] else { panic!() };
+        assert_eq!(name, "greet");
+        assert_eq!(params, &["--description", "x"]);
+        assert_eq!(body.len(), 1);
+    }
+
+    #[test]
+    fn function_requires_name() {
+        let err = parse("function\nend").unwrap_err();
+        assert!(err.message.contains("function name"));
+    }
+
+    #[test]
+    fn missing_end_in_function_is_incomplete() {
+        let err = parse("function greet\n  echo hi").unwrap_err();
+        assert!(err.incomplete);
+        assert!(err.message.contains("end"));
+    }
+
+    #[test]
+    fn nested_function_definition() {
+        let p = parse_ok("function outer\n  function inner\n    echo hi\n  end\nend");
+        let Stmt::Function { body, .. } = &p.stmts[0] else { panic!() };
+        assert!(matches!(&body[0], Stmt::Function { name, .. } if name == "inner"));
+    }
+
+    #[test]
+    fn function_params_with_dashes() {
+        let p = parse_ok("function foo --description x\n  echo hi\nend");
+        let Stmt::Function { params, body, .. } = &p.stmts[0] else { panic!() };
+        assert_eq!(params, &["--description", "x"]);
+        assert_eq!(body.len(), 1);
+    }
+
+    #[test]
+    fn function_keyword_is_not_plain_arg() {
+        let j = first_job("echo function");
+        assert_eq!(lit(&j.pipeline[0].args[1]), "function");
+    }
+
+    #[test]
+    fn quoted_function_name_is_error() {
+        let err = parse("function \"foo\"").unwrap_err();
+        assert!(err.message.contains("function name"));
     }
 
 }

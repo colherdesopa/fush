@@ -88,6 +88,11 @@ pub enum Stmt {
         value: Expr,
         cases: Vec<Case>,
     },
+    Function {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
