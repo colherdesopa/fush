@@ -67,7 +67,32 @@ functions, `while`/`switch`, config files, right prompt.
 3. `if`/`for`/`while`/`switch` complete
 4. Config home (`%USERPROFILE%\.config\fush`), universal variables
 5. Completion framework (manual completions first, then command introspection)
-6. Installer (Inno) + winget
+6. Profiles: named allow-list shells (see below)
+7. Installer (Inno) + winget
+
+## Profiles (agent allow-lists)
+
+A shell profile is a named allow-list of what may run in that session. Start
+fush with a profile (`fush --profile NAME`, or a launcher/shortcut that does);
+the session then permits only:
+
+- Builtins and externals listed in the profile (e.g. `git`, `cargo test`,
+  `rg` — including argument constraints where cheap: prefix or fixed-argv
+  rules)
+- Variables, functions, and control flow freely (the language itself is safe;
+  the danger is process spawning and file writes)
+
+Anything not allowed fails closed with a clear message (`not allowed in this
+profile: npm install`) and a non-zero status. Motivation: hand an agent (or a
+junior, or a kiosk) a shell that is powerful in-language but cannot run
+arbitrary commands or write outside sanctioned paths. Redirections and
+command substitution inherit the profile check (the inner command is checked
+too). Profiles are plain fish-syntax config files in the config home
+(`%USERPROFILE%\.config\fush\profiles\NAME.fish`), so they use the same
+language fush already speaks — define the allow-list with `set`, functions,
+and a `profile allow` builtin or a simple declarative list; exact shape is a
+design task when we get there. `--profile` without a name = read-only shell
+(no externals at all).
 
 ## Constraints
 
