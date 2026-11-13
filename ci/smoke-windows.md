@@ -116,7 +116,7 @@ Smoke matrix for the config milestone:
 
 Notes:
 - Nested quoting through `cmd.exe /c "fush.exe -c \"...\""` from WSL mangles arguments; batch files in the smoke directory remain the reliable driver.
-- `fush` does not create `%USERPROFILE%\.config\fush` on demand; `set -U` fails with os error 3 until the directory exists. First-run creation is a future milestone item.
+- First-run creation of the config directory landed after this smoke run (0a50bf5): `set -U` now creates `%USERPROFILE%\.config\fush` on demand. Re-verified on Windows with a non-existent nested `FUSH_UNIVERSALS` path — write and read-back both succeed.
 - Native Linux verification remained green: `cargo test` (148 unit + 70 integration), `cargo clippy --all-targets -- -D warnings`, `cargo build --release`.
 
 - The original `and/or after block` probe used `true` as the condition command. `true` is not a Windows program (`where true` finds nothing) and not a fush builtin, so the failure was a bad probe, not a shell bug. Re-probed with `if echo a; end; and echo yes` → `a`, `yes` — block chains work on the release build. `true`/`false` builtins are deferred to the next milestone; `test 1 -eq 1` covers the condition-command need today.
