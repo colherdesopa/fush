@@ -2,7 +2,7 @@ use crate::{exec, parser, runtime};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub fn run_repl() -> i32 {
     if !std::io::stdin().is_terminal() {
@@ -123,29 +123,56 @@ fn read_stdin_line() -> Option<String> {
 }
 
 fn prompt_text() -> String {
-    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "user".to_string());
     let host = hostname();
     let cwd = short_cwd();
     format!("{user}@{host} {cwd}> ")
 }
 
+#[cfg(windows)]
 fn hostname() -> String {
-    match std::fs::read_to_string("/proc/sys/kernel/hostname") {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => "localhost".to_string(),
+    hostname_fallback(std::env::var("COMPUTERNAME").ok().as_deref())
+}
+
+#[cfg(not(windows))]
+fn hostname() -> String {
+    hostname_fallback(std::fs::read_to_string("/proc/sys/kernel/hostname").ok().as_deref())
+}
+
+fn hostname_fallback(value: Option<&str>) -> String {
+    match value {
+        Some(value) if !value.trim().is_empty() => value.trim().to_ascii_lowercase(),
+        _ => "localhost".to_string(),
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
     }
 }
 
 fn short_cwd() -> String {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let home = std::env::var("HOME").ok();
+    let home = home_dir();
     match home {
-        Some(home) if !home.is_empty() => {
+        Some(home) if !home.as_os_str().is_empty() => {
             let cwd_s = cwd.to_string_lossy();
-            if cwd_s == home {
+            let home_s = home.to_string_lossy();
+            if cwd_s == home_s {
                 "~".to_string()
-            } else if let Some(rest) = cwd_s.strip_prefix(&home) {
-                if rest.starts_with('/') {
+            } else if let Some(rest) = cwd_s.strip_prefix(home_s.as_ref()) {
+                if rest.starts_with('/') || rest.starts_with('\\') {
                     format!("~{}", rest)
                 } else {
                     cwd_s.to_string()
@@ -158,9 +185,31 @@ fn short_cwd() -> String {
     }
 }
 
+fn history_dir() -> Option<PathBuf> {
+    let home = home_dir().map(|p| p.to_string_lossy().into_owned());
+    let userprofile = std::env::var("USERPROFILE").ok();
+    history_dir_for(home.as_deref(), userprofile.as_deref(), cfg!(windows))
+}
+
+fn history_dir_for(home: Option<&str>, userprofile: Option<&str>, windows: bool) -> Option<PathBuf> {
+    let base = if windows {
+        userprofile.or(home)?
+    } else {
+        home?
+    };
+    let mut dir = PathBuf::from(base);
+    if windows {
+        dir.push(".fush");
+    } else {
+        dir.push(".local");
+        dir.push("share");
+        dir.push("fush");
+    }
+    Some(dir)
+}
+
 fn history_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let dir = Path::new(&home).join(".local/share/fush");
+    let dir = history_dir()?;
     if std::fs::create_dir_all(&dir).is_err() {
         return None;
     }
@@ -176,6 +225,7 @@ fn save_history_if_possible(editor: &mut DefaultEditor) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn prompt_render_uses_user_host_and_short_cwd() {
@@ -203,11 +253,23 @@ mod tests {
     }
 
     #[test]
-    fn history_path_uses_local_share_dir() {
-        let home = std::env::temp_dir().join("fush-history-home");
-        let path = home.join(".local/share/fush/history");
-        let _ = std::fs::create_dir_all(path.parent().unwrap());
-        assert!(path.parent().is_some());
-        let _ = std::fs::remove_dir_all(&home);
+    fn hostname_fallback_lowercases_computername() {
+        assert_eq!(hostname_fallback(Some("COMPUTERNAME")), "computername");
+        assert_eq!(hostname_fallback(Some("  HOST  ")), "host");
+        assert_eq!(hostname_fallback(None), "localhost");
+    }
+
+    #[test]
+    fn history_dir_uses_local_share_dir_on_unix() {
+        let home = "/tmp/fush-history-home";
+        let path = PathBuf::from(home).join(".local").join("share").join("fush");
+        assert_eq!(path, history_dir_for(Some(home), None, false).unwrap());
+    }
+
+    #[test]
+    fn history_dir_uses_userprofile_dot_fush_on_windows() {
+        let home = r"C:\Users\alice";
+        let path = PathBuf::from(home).join(".fush");
+        assert_eq!(path, history_dir_for(None, Some(home), true).unwrap());
     }
 }
