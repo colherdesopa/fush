@@ -75,7 +75,17 @@ fn attach_job_chain(target: &mut Option<(ChainOp, Box<Job>)>, op: ChainOp, next:
 fn attach_stmt_chain(target: &mut Option<(ChainOp, Box<Stmt>)>, op: ChainOp, next: Stmt) {
     match target {
         Some((_, stmt)) => match stmt.as_mut() {
-            Stmt::Job(_) => *target = Some((op, Box::new(next))),
+            Stmt::Job(job) => {
+                if let Stmt::Job(next_job) = next {
+                    if job.chain.is_some() {
+                        attach_job_chain(&mut job.chain, op, next_job);
+                    } else {
+                        job.chain = Some((op, Box::new(next_job)));
+                    }
+                } else {
+                    *target = Some((op, Box::new(next)));
+                }
+            }
             Stmt::If { chain, .. }
             | Stmt::For { chain, .. }
             | Stmt::While { chain, .. }
@@ -293,9 +303,6 @@ impl Parser {
         while !matches!(self.peek().kind, TokKind::Newline | TokKind::Semi | TokKind::Eof) {
             items.push(self.parse_expr()?);
         }
-        if items.is_empty() {
-            return Err(self.unexpected("at least one item"));
-        }
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
         Ok(Stmt::For { var, items, body, chain: None })
@@ -371,8 +378,19 @@ impl Parser {
                     break;
                 }
                 TokKind::Word | TokKind::Dollar | TokKind::LParen => {
-                    self.next();
-                    args.push(self.token_to_expr(&t)?);
+                    let mut expr = {
+                        self.next();
+                        self.token_to_expr(&t)?
+                    };
+                    while matches!(self.peek().kind, TokKind::Word | TokKind::Dollar | TokKind::LParen)
+                        && self.adjacent_concat_arg(&t, self.peek())
+                    {
+                        let next_t = self.peek().clone();
+                        self.next();
+                        let next_expr = self.token_to_expr(&next_t)?;
+                        expr = self.concat_expr(expr, next_expr);
+                    }
+                    args.push(expr);
                 }
                 TokKind::FdNum | TokKind::Lt | TokKind::Gt => {
                     self.next();
@@ -405,6 +423,33 @@ impl Parser {
             return Err(self.unexpected("a command"));
         }
         Ok(Command { args, redirects })
+    }
+
+    fn adjacent_concat_arg(&self, prev: &Token, next: &Token) -> bool {
+        if prev.kind != TokKind::Dollar {
+            return false;
+        }
+        if next.pos.line != prev.pos.line {
+            return false;
+        }
+        let prev_end = prev.pos.col + prev.text.len() as u32 + 1;
+        next.pos.col <= prev_end
+    }
+
+    fn concat_expr(&self, left: Expr, right: Expr) -> Expr {
+        let left_quoted = left.quoted;
+        let right_quoted = right.quoted;
+        let mut parts = match left.kind {
+            ExprKind::Concat => left.parts,
+            _ => vec![left],
+        };
+        match right.kind {
+            ExprKind::Concat => parts.extend(right.parts),
+            _ => parts.push(right),
+        }
+        let mut expr = Expr::concat(parts.first().map(|p| p.pos).unwrap_or_default(), parts);
+        expr.quoted = left_quoted || right_quoted;
+        expr
     }
 
     fn token_to_expr(&mut self, t: &Token) -> Result<Expr, ParseError> {

@@ -13,63 +13,112 @@ pub fn run_program(rt: &mut Runtime, stmts: &[Stmt]) -> i32 {
     rt.status
 }
 
+fn set_status(rt: &mut Runtime, status: i32) {
+    rt.status = status;
+    rt.env.set_global("status", vec![status.to_string()]);
+}
+
+fn run_chain<T>(
+    rt: &mut Runtime,
+    mut status: i32,
+    chain: &Option<(ChainOp, Box<T>)>,
+    run_next: impl Fn(&mut Runtime, &T) -> Result<(), String>,
+) -> Result<(), String> {
+    if let Some((op, rest)) = chain {
+        let proceed = match op {
+            ChainOp::And => status == 0,
+            ChainOp::Or => status != 0,
+        };
+        if proceed {
+            run_next(rt, rest)?;
+            status = rt.status;
+        }
+    }
+    set_status(rt, status);
+    Ok(())
+}
+
 /// Run one statement. Err is an error message; Ok(()) means execution
 /// proceeded (status lives in rt.status).
 pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
     match stmt {
         Stmt::Job(job) => run_job(rt, job),
-        Stmt::If { cond, then_body, else_body, .. } => {
+        Stmt::If { cond, then_body, else_body, chain } => {
             run_job(rt, cond)?;
-            if rt.status == 0 {
-                run_stmts(rt, then_body)
+            let branch = if rt.status == 0 { then_body } else { else_body };
+            if branch.is_empty() {
+                set_status(rt, 0);
             } else {
-                run_stmts(rt, else_body)
+                run_stmts(rt, branch)?;
             }
+            run_chain(rt, rt.status, chain, run_stmt)
         }
-        Stmt::For { var, items, body, .. } => {
+        Stmt::For { var, items, body, chain } => {
             let mut words = Vec::new();
             for item in items {
                 words.extend(rt.expand(item)?);
             }
             rt.env.push_scope();
             let result = (|| -> Result<(), String> {
-                for w in words {
-                    rt.env.set_local(var, vec![w]);
+                for w in &words {
+                    rt.env.set_local(var, vec![w.clone()]);
                     run_stmts(rt, body)?;
                     if rt.exited.is_some() {
                         break;
                     }
                 }
+                if words.is_empty() {
+                    set_status(rt, 0);
+                }
                 Ok(())
             })();
             rt.env.pop_scope();
-            result
+            result?;
+            run_chain(rt, rt.status, chain, run_stmt)
         }
-        Stmt::While { cond, body, .. } => loop {
-            run_job(rt, cond)?;
-            if rt.status != 0 || rt.exited.is_some() {
-                break Ok(());
+        Stmt::While { cond, body, chain } => {
+            let mut ran = false;
+            loop {
+                run_job(rt, cond)?;
+                if rt.status != 0 || rt.exited.is_some() {
+                    if !ran {
+                        set_status(rt, 0);
+                    }
+                    break;
+                }
+                ran = true;
+                run_stmts(rt, body)?;
+                if rt.exited.is_some() {
+                    break;
+                }
             }
-            run_stmts(rt, body)?;
-            if rt.exited.is_some() {
-                break Ok(());
-            }
+            run_chain(rt, rt.status, chain, run_stmt)
         },
-        Stmt::Switch { value, cases, .. } => {
+        Stmt::Switch { value, cases, chain } => {
             let v = rt.expand_one(value)?;
+            let mut matched = false;
             for case in cases {
                 for pat in &case.patterns {
                     let p = rt.expand_one(pat)?;
                     if p == v || crate::runtime::glob_match(&p, &v) {
-                        return run_stmts(rt, &case.body);
+                        matched = true;
+                        run_stmts(rt, &case.body)?;
+                        break;
                     }
                 }
+                if matched {
+                    break;
+                }
             }
-            Ok(())
+            if !matched {
+                set_status(rt, 0);
+            }
+            run_chain(rt, rt.status, chain, run_stmt)
         }
-        Stmt::Function { name, params, body, .. } => {
+        Stmt::Function { name, params, body, chain } => {
             rt.register_function(name, params.clone(), body.clone());
-            Ok(())
+            set_status(rt, 0);
+            run_chain(rt, rt.status, chain, run_stmt)
         }
     }
 }
@@ -90,21 +139,8 @@ pub fn run_stmts(rt: &mut Runtime, stmts: &[Stmt]) -> Result<(), String> {
 /// Run a job: pipeline, negation, and and/or chaining.
 pub fn run_job(rt: &mut Runtime, job: &Job) -> Result<(), String> {
     let status = run_pipeline(rt, &job.pipeline)?;
-    let mut st = if job.negated { negate(status) } else { status };
-    rt.status = st;
-    rt.env.set_global("status", vec![st.to_string()]);
-    if let Some((op, rest)) = &job.chain {
-        let proceed = match op {
-            ChainOp::And => st == 0,
-            ChainOp::Or => st != 0,
-        };
-        if proceed {
-            run_job(rt, rest)?;
-            st = rt.status;
-        }
-    }
-    rt.status = st;
-    Ok(())
+    let st = if job.negated { negate(status) } else { status };
+    run_chain(rt, st, &job.chain, run_job)
 }
 
 fn negate(status: i32) -> i32 {

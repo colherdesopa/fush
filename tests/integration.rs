@@ -35,13 +35,31 @@ fn list_expansion_separate_words() {
 #[test]
 fn undefined_var_is_zero_words() {
     let (out, _, _) = fush("echo pre$missing post");
-    assert_eq!(out, "pre post\n");
+    assert_eq!(out, "post\n");
+}
+
+#[test]
+fn bare_concat_cartesian_product() {
+    let (out, _, _) = fush("set x a b; set y c d; echo $x$y");
+    assert_eq!(out, "ac bc ad bd\n");
+}
+
+#[test]
+fn bare_concat_zero_value_drops_word() {
+    let (out, _, _) = fush("set y; echo a$y");
+    assert_eq!(out, "\n");
 }
 
 #[test]
 fn quoted_concat_is_one_word() {
     let (out, _, _) = fush("set x a b; echo \"v=$x!\"");
     assert_eq!(out, "v=a b!\n");
+}
+
+#[test]
+fn bare_concat_with_undefined_value_is_empty() {
+    let (out, _, _) = fush("echo a$missing");
+    assert_eq!(out, "\n");
 }
 
 #[test]
@@ -141,6 +159,56 @@ fn or_chain_runs_on_failure() {
     assert_eq!("ran\n", out);
     let (out, _, _) = fush("true or echo ran");
     assert_eq!("", out);
+}
+
+#[test]
+fn block_chain_follows_if_truthiness() {
+    let (out, _, code) = fush("if false; echo a; end; and echo yes");
+    assert_eq!(out, "yes\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("if true; echo a; end; and echo yes");
+    assert_eq!(out, "a\nyes\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("if true; false; end; and echo yes");
+    assert_eq!(out, "");
+    assert_eq!(code, 1);
+
+    let (out, _, code) = fush("if true; false; end; or echo backup");
+    assert_eq!(out, "backup\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("if false; echo a; end; and echo yes; or echo backup");
+    assert_eq!(out, "yes\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn function_and_while_switch_semantics_follow_block_status() {
+    let (out, _, code) = fush("function f; end; and echo x");
+    assert_eq!(out, "x\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("while false; end; or echo no");
+    assert_eq!(out, "");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("while false; end; echo $status");
+    assert_eq!(out, "0\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("for i in; end; echo $status");
+    assert_eq!(out, "0\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("switch x; case y; false; end; echo $status");
+    assert_eq!(out, "0\n");
+    assert_eq!(code, 0);
+
+    let (out, _, code) = fush("if false; echo a; end; echo $status");
+    assert_eq!(out, "0\n");
+    assert_eq!(code, 0);
 }
 
 #[test]

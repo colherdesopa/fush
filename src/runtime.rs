@@ -160,53 +160,45 @@ impl Runtime {
                 Ok(vec![String::from_utf8_lossy(&out).into_owned()])
             }
             ExprKind::Concat => {
-                let mut word = String::new();
-                let mut saw_multi = false;
+                let mut words = vec![String::new()];
                 for part in &e.parts {
-                    match part.kind {
-                        ExprKind::Literal => word.push_str(&part.text),
-                        ExprKind::Var => {
-                            let vals = self.env.get(&part.text).unwrap_or_default();
-                            if !e.quoted && vals.len() > 1 {
-                                saw_multi = true;
-                            }
-                            word.push_str(&vals.join(" "));
-                        }
-                        ExprKind::Index => {
-                            let vals = self.indexed_values(&part.text, part.index.as_ref().expect("index expr has index"));
-                            if !e.quoted && vals.len() > 1 {
-                                saw_multi = true;
-                            }
-                            word.push_str(&vals.join(" "));
-                        }
+                    let part_words = match part.kind {
+                        ExprKind::Literal => vec![part.text.clone()],
+                        ExprKind::Var => self.env.get(&part.text).unwrap_or_default(),
+                        ExprKind::Index => self.indexed_values(&part.text, part.index.as_ref().expect("index expr has index")),
                         ExprKind::CmdSubst => {
                             let out = self.capture_stmts(&part.stmts)?;
-                            let words = cmdsubst_words(&out);
-                            if !e.quoted && words.len() > 1 {
-                                saw_multi = true;
-                            }
-                            word.push_str(&words.join(" "));
+                            cmdsubst_words(&out)
                         }
                         QuotedCmdSubst => {
                             let mut out = self.capture_stmts(&part.stmts)?;
                             if out.last() == Some(&b'\n') {
                                 out.pop();
                             }
-                            word.push_str(&String::from_utf8_lossy(&out));
+                            vec![String::from_utf8_lossy(&out).into_owned()]
                         }
-                        ExprKind::Concat => {
-                            let words = self.expand(part)?;
-                            if !e.quoted && words.len() > 1 {
-                                saw_multi = true;
+                        ExprKind::Concat => self.expand(part)?,
+                    };
+
+                    if e.quoted {
+                        let joined = part_words.join(" ");
+                        for word in &mut words {
+                            word.push_str(&joined);
+                        }
+                    } else {
+                        if part_words.is_empty() {
+                            return Ok(Vec::new());
+                        }
+                        let mut next = Vec::new();
+                        for value in &part_words {
+                            for prefix in &words {
+                                next.push(format!("{prefix}{value}"));
                             }
-                            word.push_str(&words.join(" "));
                         }
+                        words = next;
                     }
                 }
-                if !e.quoted && saw_multi {
-                    return Err(format!("{}: expansion of multi-valued variable in concatenation", e.pos));
-                }
-                Ok(vec![word])
+                Ok(words)
             }
         }
     }
@@ -313,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_concat_with_multi_word_var_errors() {
+    fn bare_concat_with_multi_word_var_expands_cartesian() {
         let mut rt = rt_with(&[("x", &["a", "b"])]);
         let e = Expr::concat(
             Default::default(),
@@ -323,8 +315,7 @@ mod tests {
                 Expr::literal(Default::default(), "-post".into()),
             ],
         );
-        let err = rt.expand(&e).unwrap_err();
-        assert!(err.contains("expansion of multi-valued variable in concatenation"));
+        assert_eq!(rt.expand(&e).unwrap(), vec!["pre-a-post", "pre-b-post"]);
     }
 
     #[test]
