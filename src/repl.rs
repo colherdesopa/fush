@@ -357,7 +357,7 @@ fn expand_abbr(table: &std::collections::HashMap<String, String>, line: &str) ->
 
     let first_word_start = line.len() - trimmed.len();
     let first_word_end = trimmed
-        .find(char::is_whitespace)
+        .find(|c: char| c.is_whitespace() || ";|&()<>".contains(c))
         .unwrap_or(trimmed.len());
     let word = &trimmed[..first_word_end];
     let Some(expansion) = table.get(word) else {
@@ -488,5 +488,13 @@ mod tests {
         assert_eq!(expand_abbr(&table, "hi hi"), "hello hi");
         assert_eq!(expand_abbr(&table, "  gs  echo"), "  git status  echo");
         assert_eq!(expand_abbr(&table, ""), "");
+
+        assert_eq!(expand_abbr(&table, "gs; echo hi"), "git status; echo hi");
+        assert_eq!(expand_abbr(&table, "gs|wc"), "git status|wc");
+        assert_eq!(expand_abbr(&table, "gs&&ls"), "git status&&ls");
+        assert_eq!(expand_abbr(&table, "\tgs echo"), "\tgit status echo");
+        assert_eq!(expand_abbr(&table, "gs;"), "git status;");
+        assert_eq!(expand_abbr(&table, "(gs)"), "(gs)");
+        assert_eq!(expand_abbr(&table, ">gs"), ">gs");
     }
 }
