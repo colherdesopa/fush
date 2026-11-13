@@ -510,3 +510,91 @@ fn repl_parse_error_then_continue() {
     assert!(String::from_utf8_lossy(&done.stderr).contains("fush:"));
     assert_eq!(String::from_utf8_lossy(&done.stdout), "ok\n");
 }
+
+fn fush_with_config(config: &str, args: &[&str]) -> (String, String, i32) {
+    let dir = std::env::temp_dir().join(format!("fush-config-test-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let cfg = dir.join("config.fish");
+    std::fs::write(&cfg, config).expect("write config");
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(args)
+        .env("FUSH_CONFIG", &cfg)
+        .output()
+        .expect("run fush");
+    let _ = std::fs::remove_dir_all(&dir);
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn config_var_visible_in_c_mode() {
+    let (out, err, code) = fush_with_config("set greeting hello", &["-c", "echo $greeting"]);
+    assert_eq!(out, "hello\n");
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn config_function_callable_in_c_mode() {
+    let (out, _, _) = fush_with_config(
+        "function greet\n    echo hi from fn\nend",
+        &["-c", "greet"],
+    );
+    assert_eq!(out, "hi from fn\n");
+}
+
+#[test]
+fn config_missing_is_silent() {
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(["-c", "echo ok"])
+        .env("FUSH_CONFIG", "/nonexistent/fush/config.fish")
+        .output()
+        .expect("run fush");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "ok\n");
+    assert_eq!(out.stderr.len(), 0);
+}
+
+#[test]
+fn config_parse_error_shell_continues() {
+    let (out, err, code) = fush_with_config("echo ) bad", &["-c", "echo after"]);
+    assert!(err.contains("fush: config:"));
+    assert_eq!(out, "after\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn config_failing_command_shell_continues() {
+    let (out, err, code) = fush_with_config(
+        "set greeting ok\ncd /nonexistent/dir",
+        &["-c", "echo $greeting"],
+    );
+    assert!(err.contains("fush:") || err.is_empty());
+    assert_eq!(out, "ok\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn config_abbr_reaches_tty_repl() {
+    let dir = std::env::temp_dir().join(format!("fush-abbr-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let cfg = dir.join("config.fish");
+    std::fs::write(&cfg, "abbr gs git status").expect("write config");
+    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env("FUSH_CONFIG", &cfg)
+        .spawn()
+        .expect("spawn fush");
+    {
+        use std::io::Write;
+        let mut sin = out.stdin.take().expect("stdin");
+        sin.write_all(b"echo $gs\nexit\n").expect("write");
+    }
+    let done = out.wait_with_output().expect("wait");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(done.status.code(), Some(0));
+}

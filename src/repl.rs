@@ -169,6 +169,7 @@ pub fn run_repl() -> i32 {
     }
 
     let mut rt = runtime::Runtime::new();
+    crate::config::source_config(&mut rt);
     let mut buffer = String::new();
     loop {
         let prompt = if buffer.is_empty() {
@@ -234,6 +235,7 @@ pub fn run_repl() -> i32 {
 
 fn run_non_tty_repl() -> i32 {
     let mut rt = runtime::Runtime::new();
+    crate::config::source_config(&mut rt);
     let mut buffer = String::new();
     loop {
         match read_stdin_line() {

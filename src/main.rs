@@ -55,6 +55,7 @@ fn main() {
         }
     };
     let mut rt = runtime::Runtime::new();
+    config::source_config(&mut rt);
     let status = exec::run_program(&mut rt, &program.stmts);
     std::process::exit(status);
 }

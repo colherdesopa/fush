@@ -1,3 +1,6 @@
+use crate::exec;
+use crate::parser;
+use crate::runtime::Runtime;
 use std::path::PathBuf;
 
 #[allow(dead_code)]
@@ -34,6 +37,46 @@ pub fn config_path() -> Option<PathBuf> {
     Some(dir.join("config.fish"))
 }
 
+/// Config path with the FUSH_CONFIG override; defaults to config_path().
+#[allow(dead_code)]
+pub fn config_file() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("FUSH_CONFIG") {
+        return Some(PathBuf::from(p));
+    }
+    config_path()
+}
+
+/// Source the startup config into `rt` once, before the first prompt or
+/// before -c/script execution. Missing file is silent; parse or runtime
+/// errors print `fush: config: <msg>` and the shell continues. Runs with
+/// the cwd unchanged; `set -l` at config top level behaves like `set -l`
+/// at top level anywhere else (globals, since there is no enclosing
+/// function scope).
+#[allow(dead_code)]
+pub fn source_config(rt: &mut Runtime) {
+    if let Some(path) = config_file() {
+        source_config_path(rt, &path);
+    }
+}
+
+/// source_config with an injected path, for tests.
+#[allow(dead_code)]
+pub fn source_config_path(rt: &mut Runtime, path: &std::path::Path) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let program = match parser::parse(&text) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("fush: config: {e}");
+            return;
+        }
+    };
+    if let Err(e) = exec::run_stmts(rt, &program.stmts) {
+        eprintln!("fush: config: {e}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,6 +107,25 @@ mod tests {
     }
 
     #[test]
+    fn source_config_populates_abbrs_and_vars() {
+        let dir = std::env::temp_dir().join(format!(
+            "fush-unit-config-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.fish");
+        std::fs::write(&cfg, "set greeting hello\nabbr gs git status").unwrap();
+        let mut rt = Runtime::new();
+        source_config_path(&mut rt, &cfg);
+        let got_env = rt.env.get("greeting");
+        let got_abbr = rt.abbrs.get("gs").cloned();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got_env, Some(vec!["hello".to_string()]));
+        assert_eq!(got_abbr, Some("git status".to_string()));
+    }
+
+    #[test]
     fn config_path_joins_config_fish() {
         let home = "/tmp/fush-config-home";
         let path = PathBuf::from(home)
@@ -78,3 +140,4 @@ mod tests {
         );
     }
 }
+
