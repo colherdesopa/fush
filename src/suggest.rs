@@ -1,9 +1,8 @@
-#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct Suggester {
     history: Vec<String>,
 }
 
-#[allow(dead_code)]
 impl Suggester {
     pub fn new() -> Self {
         Self { history: Vec::new() }
@@ -36,10 +35,12 @@ impl Suggester {
         None
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.history.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.history.is_empty()
     }

@@ -1,20 +1,146 @@
-use crate::{exec, parser, runtime};
+use crate::{exec, highlight, parser, runtime, suggest::Suggester};
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::history::DefaultHistory;
+use rustyline::{Context, Editor, Helper};
+use std::borrow::Cow;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+
+const BUILTIN_NAMES: &[&str] = &["set", "echo", "cd", "exit", "test"];
+
+type FushEditor = Editor<FushHelper, DefaultHistory>;
+
+#[derive(Debug, Clone)]
+pub struct FushHelper {
+    #[allow(dead_code)]
+    builtins: Vec<String>,
+    suggester: Suggester,
+}
+
+impl FushHelper {
+    fn new(suggester: Suggester) -> Self {
+        Self {
+            builtins: BUILTIN_NAMES.iter().map(|name| (*name).to_string()).collect(),
+            suggester,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn is_builtin(&self, command: &str) -> bool {
+        self.builtins.iter().any(|name| name == command)
+    }
+
+    fn from_history(history: &DefaultHistory) -> Self {
+        let mut suggester = Suggester::new();
+        for entry in history.iter() {
+            suggester.push(entry.as_str());
+        }
+        if suggester.is_empty() {
+            return Self::new(suggester);
+        }
+        Self::new(suggester)
+    }
+
+    fn colors_disabled_for(no_color: Option<&std::ffi::OsStr>, stdout_is_tty: bool) -> bool {
+        no_color.is_some() || !stdout_is_tty
+    }
+
+    #[allow(dead_code)]
+    fn colors_disabled() -> bool {
+        Self::colors_disabled_for(
+            std::env::var_os("NO_COLOR").as_deref(),
+            std::io::stdout().is_terminal(),
+        )
+    }
+
+    fn hint_for(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+        enabled: bool,
+        no_color: Option<&std::ffi::OsStr>,
+        stdout_is_tty: bool,
+    ) -> Option<String> {
+        if !enabled || Self::colors_disabled_for(no_color, stdout_is_tty) || line.is_empty() || pos != line.len() {
+            return None;
+        }
+        self.suggester.suggest(line)
+    }
+
+    fn highlight_for<'l>(
+        &self,
+        line: &'l str,
+        _pos: usize,
+        enabled: bool,
+        no_color: Option<&std::ffi::OsStr>,
+        stdout_is_tty: bool,
+    ) -> Cow<'l, str> {
+        if !enabled || Self::colors_disabled_for(no_color, stdout_is_tty) || line.is_empty() {
+            return Cow::Borrowed(line);
+        }
+        let rendered = highlight::render_ansi(&highlight::highlight(line));
+        if rendered == line {
+            Cow::Borrowed(line)
+        } else {
+            Cow::Owned(rendered)
+        }
+    }
+}
+
+impl Helper for FushHelper {}
+
+impl rustyline::completion::Completer for FushHelper {
+    type Candidate = String;
+
+    fn complete(
+        &self,
+        _line: &str,
+        _pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        Ok((0, Vec::new()))
+    }
+}
+
+impl rustyline::validate::Validator for FushHelper {}
+
+impl rustyline::hint::Hinter for FushHelper {
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<Self::Hint> {
+        self.hint_for(line, pos, ctx, true, std::env::var_os("NO_COLOR").as_deref(), std::io::stdout().is_terminal())
+    }
+}
+
+impl rustyline::highlight::Highlighter for FushHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        self.highlight_for(
+            line,
+            _pos,
+            true,
+            std::env::var_os("NO_COLOR").as_deref(),
+            std::io::stdout().is_terminal(),
+        )
+    }
+}
 
 pub fn run_repl() -> i32 {
     if !std::io::stdin().is_terminal() {
         return run_non_tty_repl();
     }
 
-    let mut editor = match DefaultEditor::new() {
+    let mut editor = match FushEditor::with_helper(FushHelper::new(Suggester::new())) {
         Ok(editor) => editor,
         Err(_) => return run_non_tty_repl(),
     };
     if let Some(path) = history_path() {
         let _ = editor.load_history(&path);
+    }
+    {
+        let history = editor.history().to_owned();
+        let helper = FushHelper::from_history(history);
+        editor.set_helper(Some(helper));
     }
 
     let mut rt = runtime::Runtime::new();
@@ -23,13 +149,19 @@ pub fn run_repl() -> i32 {
         let prompt = if buffer.is_empty() { prompt_text() } else { "...> ".to_string() };
         match editor.readline(&prompt) {
             Ok(line) => {
-                if buffer.is_empty() && line.trim().is_empty() {
+                if line.trim().is_empty() && buffer.is_empty() {
                     continue;
                 }
                 if !buffer.is_empty() {
                     buffer.push('\n');
                 }
                 buffer.push_str(&line);
+                if !line.trim().is_empty() {
+                    if let Some(helper) = editor.helper_mut() {
+                        helper.suggester.push(&line);
+                    }
+                    let _ = editor.add_history_entry(line.as_str());
+                }
                 match parser::parse(&buffer) {
                     Ok(program) => {
                         let status = exec::run_program(&mut rt, &program.stmts);
@@ -216,7 +348,7 @@ fn history_path() -> Option<PathBuf> {
     Some(dir.join("history"))
 }
 
-fn save_history_if_possible(editor: &mut DefaultEditor) {
+fn save_history_if_possible(editor: &mut FushEditor) {
     if let Some(path) = history_path() {
         let _ = editor.save_history(&path);
     }
@@ -225,7 +357,17 @@ fn save_history_if_possible(editor: &mut DefaultEditor) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustyline::Context;
+    use rustyline::history::History;
+    use std::ffi::OsStr;
     use std::path::Path;
+
+    #[test]
+    fn no_color_flag_disables_color_when_requested() {
+        assert!(FushHelper::colors_disabled_for(Some(OsStr::new("1")), true));
+        assert!(!FushHelper::colors_disabled_for(None, true));
+        assert!(FushHelper::colors_disabled_for(None, false));
+    }
 
     #[test]
     fn prompt_render_uses_user_host_and_short_cwd() {
@@ -271,5 +413,45 @@ mod tests {
         let home = r"C:\Users\alice";
         let path = PathBuf::from(home).join(".fush");
         assert_eq!(path, history_dir_for(None, Some(home), true).unwrap());
+    }
+
+    #[test]
+    fn helper_tracks_known_builtins_and_history() {
+        let mut suggester = Suggester::new();
+        suggester.push("echo hello");
+        let helper = FushHelper::new(suggester);
+
+        assert!(helper.is_builtin("echo"));
+        assert!(!helper.is_builtin("mystery"));
+    }
+
+    #[test]
+    fn highlighter_returns_plain_input_when_color_is_disabled() {
+        let helper = FushHelper::new(Suggester::new());
+        let result = helper.highlight_for("echo hello", 11, false, None, true);
+        assert_eq!(result, "echo hello");
+    }
+
+    #[test]
+    fn hinter_returns_suffix_for_known_history_prefix() {
+        let mut history = rustyline::history::DefaultHistory::new();
+        history.add("echo hello").unwrap();
+        let helper = FushHelper::from_history(&history);
+        let ctx = Context::new(&history);
+
+        assert_eq!(
+            helper.hint_for("echo", 4, &ctx, true, None, true),
+            Some(" hello".to_string())
+        );
+    }
+
+    #[test]
+    fn hinter_returns_none_for_unknown_prefix() {
+        let mut history = rustyline::history::DefaultHistory::new();
+        history.add("echo hello").unwrap();
+        let helper = FushHelper::from_history(&history);
+        let ctx = Context::new(&history);
+
+        assert_eq!(helper.hint_for("ls", 2, &ctx, true, None, true), None);
     }
 }
