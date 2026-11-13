@@ -52,6 +52,12 @@ pub fn save(
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        let _ = rt;
+        return Err(format!("fush: set: cannot write universals file: {e}"));
+    }
     let tmp = path.with_extension("tmp");
     if let Err(e) = std::fs::write(&tmp, &text) {
         let _ = rt;
@@ -152,6 +158,24 @@ fn read_lines_with_warnings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_creates_missing_parent_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "fush-universal-mkdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = base.join("deeply").join("nested").join("universals");
+        let rt = Runtime::new();
+        save(&rt, &path, "made", &["yes".to_string()]).expect("save");
+        let vars = read_lines(&path);
+        assert_eq!(vars, vec![("made".to_string(), vec!["yes".to_string()])]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
