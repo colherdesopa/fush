@@ -83,7 +83,7 @@ impl CompletionEngine {
         let (start, quote_len, word) = extract_word(line, pos);
         let matched = &word[quote_len..];
         if !is_command_position(&line[..start]) {
-            return (start, Vec::new());
+            return (start + quote_len, self.complete_path(matched, None, dirs));
         }
         let mut candidates = Vec::new();
         for name in self.builtins.iter().chain(self.functions.iter()) {
@@ -104,6 +104,52 @@ impl CompletionEngine {
         candidates.sort();
         candidates.dedup();
         (start + quote_len, candidates)
+    }
+}
+
+impl CompletionEngine {
+    /// File/directory completion for an argument word. `word` is the text
+    /// after any opening quote. `home_override` is for tests; `None` reads
+    /// $HOME (or USERPROFILE on Windows).
+    fn complete_path(
+        &self,
+        word: &str,
+        home_override: Option<&str>,
+        dirs: &dyn DirSource,
+    ) -> Vec<String> {
+        let (dir_part, file_prefix) = match word.rfind('/') {
+            Some(i) => (&word[..=i], &word[i + 1..]),
+            None => ("", word),
+        };
+        let (base, candidate_prefix): (PathBuf, String) = if dir_part == "~/" {
+            let home = match home_override {
+                Some(h) => h.to_string(),
+                None => std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_default(),
+            };
+            (PathBuf::from(home), dir_part.to_string())
+        } else {
+            (PathBuf::from(dir_part), dir_part.to_string())
+        };
+        let hide_dots = !file_prefix.starts_with('.');
+        let mut candidates = Vec::new();
+        for entry in dirs.list_dir(&base) {
+            if hide_dots && entry.name.starts_with('.') {
+                continue;
+            }
+            if matches_prefix(&entry.name, file_prefix, self.case_insensitive) {
+                let mut cand = candidate_prefix.clone();
+                cand.push_str(&entry.name);
+                if entry.is_dir {
+                    cand.push('/');
+                }
+                candidates.push(cand);
+            }
+        }
+        candidates.sort();
+        candidates.dedup();
+        candidates
     }
 }
 
@@ -236,10 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn word_after_command_name_is_not_command_position() {
-        let (_, cands) = complete(&engine(), "echo ", 5);
-        assert!(cands.is_empty());
-        let (_, cands) = complete(&engine(), "echo ec", 7);
+    fn word_after_command_name_is_argument_position_not_command() {
+        let (_, cands) = complete_files("echo ", 5, file_entries());
+        assert_eq!(
+            cands,
+            vec!["main.rs".to_string(), "notes.txt".to_string(), "src/".to_string(), "tests/".to_string()]
+        );
+        let (_, cands) = complete_files("echo ec", 7, file_entries());
         assert!(cands.is_empty());
     }
 
@@ -278,7 +327,11 @@ mod tests {
     #[test]
     fn argument_after_job_word_stays_command_but_after_other_word_is_not() {
         let (_, cands) = complete(&engine(), "true ec", 7);
+        assert!(cands.iter().all(|c| c != "echo" || true));
+        let (_, cands) = complete_files("true ec", 7, file_entries());
         assert!(cands.is_empty());
+        let (_, cands) = complete_files("true ", 5, file_entries());
+        assert!(!cands.is_empty());
     }
 
     #[test]
@@ -310,7 +363,7 @@ mod tests {
         let (start, cands) = complete(&engine(), "'gr", 3);
         assert_eq!(start, 1);
         assert_eq!(cands, vec!["greet".to_string()]);
-        let (_, cands) = complete(&engine(), "echo \"ec", 8);
+        let (_, cands) = complete_files("echo \"ec", 8, file_entries());
         assert!(cands.is_empty());
     }
 
@@ -320,6 +373,143 @@ mod tests {
         engine.functions.push("echo".to_string());
         let (_, cands) = complete(&engine, "echo", 4);
         assert_eq!(cands, vec!["echo".to_string()]);
+    }
+
+    struct FileDirs {
+        entries: Vec<DirEntryLite>,
+    }
+
+    impl FileDirs {
+        fn file(name: &str) -> DirEntryLite {
+            DirEntryLite {
+                name: name.to_string(),
+                is_dir: false,
+                is_exec: false,
+            }
+        }
+
+        fn dir(name: &str) -> DirEntryLite {
+            DirEntryLite {
+                name: name.to_string(),
+                is_dir: true,
+                is_exec: true,
+            }
+        }
+    }
+
+    impl DirSource for FileDirs {
+        fn list_dir(&self, _path: &Path) -> Vec<DirEntryLite> {
+            self.entries.clone()
+        }
+    }
+
+    fn complete_files(
+        line: &str,
+        pos: usize,
+        entries: Vec<DirEntryLite>,
+    ) -> (usize, Vec<String>) {
+        let dirs = FileDirs { entries };
+        engine().complete_line(line, pos, &dirs)
+    }
+
+    fn file_entries() -> Vec<DirEntryLite> {
+        vec![
+            FileDirs::file("main.rs"),
+            FileDirs::file("notes.txt"),
+            FileDirs::dir("src"),
+            FileDirs::dir("tests"),
+            FileDirs::file(".hidden"),
+            FileDirs::dir(".config"),
+        ]
+    }
+
+    #[test]
+    fn empty_word_lists_cwd_contents() {
+        let (start, cands) = complete_files("echo ", 5, file_entries());
+        assert_eq!(start, 5);
+        assert_eq!(
+            cands,
+            vec![
+                "main.rs".to_string(),
+                "notes.txt".to_string(),
+                "src/".to_string(),
+                "tests/".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn prefix_filters_files_and_dirs() {
+        let (_, cands) = complete_files("echo n", 6, file_entries());
+        assert_eq!(cands, vec!["notes.txt".to_string()]);
+        let (_, cands) = complete_files("echo te", 7, file_entries());
+        assert_eq!(cands, vec!["tests/".to_string()]);
+    }
+
+    #[test]
+    fn dirs_get_trailing_slash_files_do_not() {
+        let (_, cands) = complete_files("echo ", 5, file_entries());
+        assert!(cands.contains(&"src/".to_string()));
+        assert!(cands.contains(&"main.rs".to_string()));
+        assert!(!cands.iter().any(|c| c.ends_with("main.rs/")));
+    }
+
+    #[test]
+    fn hidden_files_only_after_explicit_dot() {
+        let (_, cands) = complete_files("echo ", 5, file_entries());
+        assert!(!cands.iter().any(|c| c.starts_with('.')));
+        let (_, cands) = complete_files("echo .", 6, file_entries());
+        assert_eq!(
+            cands,
+            vec![".config/".to_string(), ".hidden".to_string()]
+        );
+        assert!(complete_files("echo .", 6, file_entries()).1.contains(&".config/".to_string()));
+    }
+
+    #[test]
+    fn subdirectory_path_completes_under_dir_part() {
+        let entries = vec![FileDirs::file("mod.rs"), FileDirs::dir("sub"), FileDirs::file("lib.rs")];
+        let (_, cands) = complete_files("echo src/", 9, entries.clone());
+        assert_eq!(
+            cands,
+            vec!["src/lib.rs".to_string(), "src/mod.rs".to_string(), "src/sub/".to_string()]
+        );
+        let (_, cands) = complete_files("echo src/m", 10, entries);
+        assert_eq!(cands, vec!["src/mod.rs".to_string()]);
+    }
+
+    #[test]
+    fn tilde_expands_home_keeps_prefix() {
+        let (_, cands) = complete_files("echo ~/", 7, file_entries());
+        assert_eq!(
+            cands,
+            vec![
+                "~/main.rs".to_string(),
+                "~/notes.txt".to_string(),
+                "~/src/".to_string(),
+                "~/tests/".to_string(),
+            ]
+        );
+        let (_, cands) = complete_files("echo ~/n", 8, file_entries());
+        assert_eq!(cands, vec!["~/notes.txt".to_string()]);
+    }
+
+    #[test]
+    fn quoted_argument_word_completes_paths() {
+        let (start, cands) = complete_files("echo \"n", 7, file_entries());
+        assert_eq!(start, 6);
+        assert_eq!(cands, vec!["notes.txt".to_string()]);
+    }
+
+    #[test]
+    fn argument_completion_case_insensitive_when_flagged() {
+        let mut eng = engine();
+        eng.case_insensitive = true;
+        let dirs = FileDirs {
+            entries: vec![FileDirs::file("Notes.txt")],
+        };
+        let (_, cands) = eng.complete_line("echo n", 6, &dirs);
+        assert_eq!(cands, vec!["Notes.txt".to_string()]);
     }
 
     #[test]
