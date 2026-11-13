@@ -4,7 +4,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-static EXTERNAL_CACHE: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+struct ExternalCache {
+    path: std::ffi::OsString,
+    entries: HashMap<String, bool>,
+}
+
+static EXTERNAL_CACHE: Mutex<Option<ExternalCache>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -153,9 +158,12 @@ pub fn is_external(name: &str) -> bool {
         return false;
     }
 
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+
     if let Ok(guard) = EXTERNAL_CACHE.lock()
         && let Some(cache) = guard.as_ref()
-        && let Some(hit) = cache.get(trimmed)
+        && cache.path == path_var
+        && let Some(hit) = cache.entries.get(trimmed)
     {
         return *hit;
     }
@@ -163,9 +171,15 @@ pub fn is_external(name: &str) -> bool {
     let found = scan_path(trimmed);
 
     if let Ok(mut guard) = EXTERNAL_CACHE.lock() {
-        guard
-            .get_or_insert_with(HashMap::new)
-            .insert(trimmed.to_string(), found);
+        let cache = guard.get_or_insert_with(|| ExternalCache {
+            path: path_var.clone(),
+            entries: HashMap::new(),
+        });
+        if cache.path != path_var {
+            cache.path = path_var;
+            cache.entries.clear();
+        }
+        cache.entries.insert(trimmed.to_string(), found);
     }
 
     found
@@ -201,6 +215,12 @@ pub fn reset_external_cache_for_tests() {
     if let Ok(mut guard) = EXTERNAL_CACHE.lock() {
         *guard = None;
     }
+}
+
+#[cfg(test)]
+fn cached_entry(name: &str) -> Option<bool> {
+    let Ok(guard) = EXTERNAL_CACHE.lock() else { panic!("cache poisoned") };
+    guard.as_ref().and_then(|cache| cache.entries.get(name).copied())
 }
 
 fn classify_token(raw: &str, command_pos: bool) -> Style {
@@ -368,8 +388,25 @@ mod tests {
     }
 
     fn cached(name: &str) -> Option<bool> {
-        let Ok(guard) = EXTERNAL_CACHE.lock() else { panic!("cache poisoned") };
-        guard.as_ref().and_then(|cache| cache.get(name).copied())
+        cached_entry(name)
+    }
+
+    #[test]
+    fn cache_invalidates_when_path_changes() {
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let fake_dir = std::env::temp_dir().join("fush-nonexistent-path-dir");
+        reset_external_cache_for_tests();
+        unsafe {
+            std::env::set_var("PATH", &fake_dir);
+        }
+        assert!(!is_external("ls"));
+        assert_eq!(cached_entry("ls"), Some(false));
+        unsafe {
+            std::env::set_var("PATH", &old_path);
+        }
+        assert!(is_external("ls"));
+        assert_eq!(cached_entry("ls"), Some(true));
+        reset_external_cache_for_tests();
     }
 
     #[test]
