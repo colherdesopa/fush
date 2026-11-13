@@ -97,6 +97,11 @@ impl Runtime {
 
     fn indexed_values(&self, name: &str, index: &IndexSpec) -> Vec<String> {
         let values = self.env.get(name).unwrap_or_default();
+        self.indexed_from(values, index)
+    }
+
+    fn indexed_from(&self, values: Vec<String>, index: &IndexSpec) -> Vec<String> {
+        let values = &values;
         if values.is_empty() {
             return Vec::new();
         }
@@ -114,21 +119,26 @@ impl Runtime {
                 }
             }
             IndexSpec::Range { start, end } => {
+                let len = values.len() as isize;
                 let start_idx = match start {
-                    Some(v) => {
-                        let v = *v;
-                        if v >= 0 { (v - 1).max(0) as usize } else { ((values.len() as isize) + v).max(0) as usize }
-                    }
+                    Some(v) => match range_bound(*v, len) {
+                        Some(i) => i,
+                        None => return Vec::new(),
+                    },
                     None => 0,
                 };
                 let end_idx = match end {
-                    Some(v) => {
-                        let v = *v;
-                        if v >= 0 { (v - 1).min(values.len() as isize - 1) as usize } else { ((values.len() as isize) + v).max(0) as usize }
-                    }
-                    None => values.len().saturating_sub(1),
+                    Some(v) => match range_bound(*v, len) {
+                        Some(i) => i,
+                        None => return Vec::new(),
+                    },
+                    None => len - 1,
                 };
-                if start_idx > end_idx { Vec::new() } else { values[start_idx..=end_idx].to_vec() }
+                if start_idx < 0 || end_idx < 0 || start_idx > end_idx {
+                    Vec::new()
+                } else {
+                    values[start_idx as usize..=end_idx as usize].to_vec()
+                }
             }
         }
     }
@@ -219,6 +229,19 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     glob_inner(pattern.as_bytes(), text.as_bytes())
 }
 
+/// Normalizes a fish-style 1-based range bound to a 0-based index.
+/// Positive: v-1; negative: len+v; zero or out of range: None (empty).
+fn range_bound(v: isize, len: isize) -> Option<isize> {
+    if v > 0 {
+        if v - 1 < len { Some(v - 1) } else { None }
+    } else if v < 0 {
+        let i = len + v;
+        if i >= 0 { Some(i) } else { None }
+    } else {
+        None
+    }
+}
+
 fn glob_inner(p: &[u8], t: &[u8]) -> bool {
     if p.is_empty() {
         return t.is_empty();
@@ -297,6 +320,11 @@ mod tests {
         assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(2), end: None })).unwrap(), vec!["b", "c"]);
         assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(9))).unwrap(), Vec::<String>::new());
         assert_eq!(rt.expand(&Expr::index(Default::default(), "missing".into(), IndexSpec::At(1))).unwrap(), Vec::<String>::new());
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: None, end: Some(0) })).unwrap(), Vec::<String>::new());
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(0), end: None })).unwrap(), Vec::<String>::new());
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(-9), end: Some(2) })).unwrap(), Vec::<String>::new());
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(-2), end: Some(-1) })).unwrap(), vec!["b", "c"]);
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(9), end: Some(2) })).unwrap(), Vec::<String>::new());
     }
 
     #[test]
