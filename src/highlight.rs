@@ -11,6 +11,9 @@ struct ExternalCache {
 
 static EXTERNAL_CACHE: Mutex<Option<ExternalCache>> = Mutex::new(None);
 
+#[cfg(test)]
+static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
     Default,
@@ -322,9 +325,12 @@ mod tests {
 
     #[test]
     fn external_bold() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let external = if cfg!(windows) { "cmd.exe" } else { "sh" };
+        reset_external_cache_for_tests();
         let spans = highlight(external);
         assert_eq!(spans, vec![(external.to_string(), Style::Bold)]);
+        reset_external_cache_for_tests();
     }
 
     #[test]
@@ -372,6 +378,7 @@ mod tests {
 
     #[test]
     fn external_lookup_is_cached() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_external_cache_for_tests();
         assert!(is_external("ls"));
         assert!(is_external("ls"));
@@ -393,6 +400,7 @@ mod tests {
 
     #[test]
     fn cache_invalidates_when_path_changes() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old_path = std::env::var_os("PATH").unwrap_or_default();
         let fake_dir = std::env::temp_dir().join("fush-nonexistent-path-dir");
         reset_external_cache_for_tests();
