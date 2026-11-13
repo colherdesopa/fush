@@ -121,6 +121,61 @@ pub fn source_config_path(rt: &mut Runtime, path: &std::path::Path) {
     }
 }
 
+/// Outcome of first-run detection. `Import` and `Decline` are the two
+/// recorded results of prompting the user; `Nothing` means no prompt is
+/// needed (primary config exists, or there is no fish config to offer).
+#[allow(dead_code)]
+pub enum FirstRun {
+    Import,
+    Decline,
+    Nothing,
+}
+
+/// Whether first-run import is pending: only when the primary config is
+/// absent and a fish config exists. Every other combination is `Nothing`;
+/// `Import`/`Decline` are set by the caller after prompting.
+#[allow(dead_code)]
+pub fn first_run_state(fush: Option<&std::path::Path>, fish: Option<&std::path::Path>) -> FirstRun {
+    match (fush, fish) {
+        (Some(fush), Some(fish)) if !fush.exists() && fish.exists() => FirstRun::Import,
+        _ => FirstRun::Nothing,
+    }
+}
+
+/// Copy the fish config to the primary config path atomically: read the
+/// source, create missing parent dirs, write a tmp file, then rename over
+/// the target. Overwrites an existing target without corrupting it.
+/// Errors start `fush: config:`.
+#[allow(dead_code)]
+pub fn import_fish_config(fish: &std::path::Path, fush: &std::path::Path) -> Result<(), String> {
+    let bytes = std::fs::read(fish).map_err(|e| format!("fush: config: cannot read fish config: {e}"))?;
+    write_atomic(fush, &bytes)
+}
+
+/// Create an empty primary config file (and any missing parent dirs).
+/// Errors start `fush: config:`.
+#[allow(dead_code)]
+pub fn create_empty_config(fush: &std::path::Path) -> Result<(), String> {
+    write_atomic(fush, b"")
+}
+
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return Err(format!("fush: config: cannot create config dir: {e}"));
+    }
+    let tmp = path.with_extension("tmp");
+    if let Err(e) = std::fs::write(&tmp, bytes) {
+        return Err(format!("fush: config: cannot write config: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("fush: config: cannot write config: {e}"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +293,121 @@ mod tests {
                 .unwrap()
                 .join("config.fish")
         );
+    }
+}
+
+#[cfg(test)]
+mod first_run_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fush-config-{}-{:?}-{tag}",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    fn write(path: &std::path::Path, bytes: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn first_run_state_matrix() {
+        let base = temp_dir("matrix");
+        let fush = base.join("cfg").join("config.fush");
+        let fish = base.join("fish").join("config.fish");
+        let _ = std::fs::remove_dir_all(&base);
+
+        write(&fish, b"set -x EDITOR vim\n");
+
+        // fush missing + fish exists -> pending import.
+        assert!(matches!(
+            first_run_state(Some(&fush), Some(&fish)),
+            FirstRun::Import
+        ));
+        // fush missing + fish missing -> nothing.
+        assert!(matches!(
+            first_run_state(Some(&fush), None),
+            FirstRun::Nothing
+        ));
+        assert!(matches!(
+            first_run_state(Some(&fush), Some(&base.join("nope"))),
+            FirstRun::Nothing
+        ));
+
+        write(&fush, b"");
+        // fush exists -> nothing, fish present or not.
+        assert!(matches!(
+            first_run_state(Some(&fush), Some
+
+(&fish)),
+            FirstRun::Nothing
+        ));
+        assert!(matches!(first_run_state(Some(&fush), None), FirstRun::Nothing));
+
+        // fush missing (None) -> nothing even with fish present.
+        assert!(matches!(
+            first_run_state(None, Some(&fish)),
+            FirstRun::Nothing
+        ));
+        assert!(matches!(first_run_state(None, None), FirstRun::Nothing));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_copies_bytes_exactly() {
+        let
+
+base = temp_dir("import");
+        let fish = base.join("fish").join("config.fish");
+        let fush = base.join("cfg").join("config.fush");
+        let _ = std::fs::remove_dir_all(&base);
+        let bytes = b"set -g x 1\nalias ll 'ls -l'\n";
+        write(&fish, bytes);
+
+        import_fish_config(&fish, &fush).expect("import");
+        assert_eq!(std::fs::read(&fush).unwrap(), bytes);
+
+        let _
+
+ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_overwrites_existing_target() {
+        let base = temp_dir("overwrite");
+        let fish = base.join("fish").join("config.fish");
+        let fush = base.join("cfg").
+
+
+join("config.fush");
+        let _ = std::fs::remove_dir_all(&base);
+        write(&fush, b"old-content-that-should-go\n");
+        let bytes = b"new\n";
+        write(&fish, bytes);
+
+        import_fish_config(&fish, &fush).expect("import");
+        assert_eq!(std::fs::read(&fush).unwrap(), bytes);
+        assert!(!fush
+            .with_extension("tmp")
+            .exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn create_empty_config_zero_bytes_and_parents() {
+        let base = temp_dir("empty");
+        let fush = base.join("a").join("b").join("config.fush");
+        let _ = std::fs::remove_dir_all(&base);
+
+        create_empty_config(&fush).expect("create");
+        assert!(fush.is_file());
+        assert_eq!(std::fs::read(&fush).unwrap(), Vec::<u8>::new());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
