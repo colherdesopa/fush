@@ -1,4 +1,4 @@
-use crate::completion::{self, BUILTIN_NAMES, CompletionEngine};
+use crate::completion::{self, BUILTIN_NAMES, CompletionEngine, CompletionRule};
 use crate::{exec, highlight, parser, runtime, suggest::Suggester};
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
@@ -22,6 +22,7 @@ pub struct FushHelper {
 struct RuntimeSnapshot {
     functions: Vec<String>,
     path_dirs: Vec<PathBuf>,
+    completions: std::collections::HashMap<String, Vec<CompletionRule>>,
 }
 
 impl RuntimeSnapshot {
@@ -31,6 +32,7 @@ impl RuntimeSnapshot {
             path_dirs: std::env::var_os("PATH")
                 .map(|v| std::env::split_paths(&v).collect())
                 .unwrap_or_default(),
+            completions: rt.completions.clone(),
         }
     }
 }
@@ -126,11 +128,12 @@ impl rustyline::completion::Completer for FushHelper {
         _ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         let snapshot = self.snapshot.borrow();
-        let engine = CompletionEngine::new(
+        let mut engine = CompletionEngine::new(
             BUILTIN_NAMES.iter().map(|name| name.to_string()).collect(),
             snapshot.functions.clone(),
             snapshot.path_dirs.clone(),
         );
+        engine.completions = snapshot.completions.clone();
         drop(snapshot);
         let (start, candidates) = engine.complete_line(line, pos, &completion::FsDirSource);
         Ok((start, candidates))

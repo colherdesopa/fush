@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub const BUILTIN_NAMES: &[&str] = &[
@@ -22,6 +23,15 @@ pub struct DirEntryLite {
     pub name: String,
     pub is_dir: bool,
     pub is_exec: bool,
+}
+
+/// A manual completion rule registered via `complete -c cmd ...`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionRule {
+    pub candidates: Vec<String>,
+    pub suppress_files: bool,
+    pub dirs_only: bool,
+    pub description: Option<String>,
 }
 
 pub trait DirSource {
@@ -65,6 +75,7 @@ pub struct CompletionEngine {
     pub builtins: Vec<String>,
     pub functions: Vec<String>,
     pub path_dirs: Vec<PathBuf>,
+    pub completions: HashMap<String, Vec<CompletionRule>>,
     pub case_insensitive: bool,
 }
 
@@ -74,6 +85,7 @@ impl CompletionEngine {
             builtins,
             functions,
             path_dirs,
+            completions: HashMap::new(),
             case_insensitive: cfg!(windows),
         }
     }
@@ -83,7 +95,11 @@ impl CompletionEngine {
         let (start, quote_len, word) = extract_word(line, pos);
         let matched = &word[quote_len..];
         if !is_command_position(&line[..start]) {
-            return (start + quote_len, self.complete_path(matched, None, dirs));
+            let cmd = command_word_before(&line[..start]);
+            if let Some(rules) = self.completions.get(&cmd) {
+                return (start + quote_len, self.complete_with_rules(rules, matched, dirs));
+            }
+            return (start + quote_len, self.complete_path(matched, None, dirs, false));
         }
         let mut candidates = Vec::new();
         for name in self.builtins.iter().chain(self.functions.iter()) {
@@ -108,14 +124,43 @@ impl CompletionEngine {
 }
 
 impl CompletionEngine {
+    /// Argument completion for a command with manual rules: the union of
+    /// `-a` candidates (prefix match) plus default file completion unless
+    /// suppressed; `dirs_only` rules restrict file completion to dirs.
+    fn complete_with_rules(
+        &self,
+        rules: &[CompletionRule],
+        word: &str,
+        dirs: &dyn DirSource,
+    ) -> Vec<String> {
+        let mut candidates: Vec<String> = Vec::new();
+        for rule in rules {
+            for cand in &rule.candidates {
+                if matches_prefix(cand, word, self.case_insensitive) {
+                    candidates.push(cand.clone());
+                }
+            }
+        }
+        let suppress = rules.iter().any(|r| r.suppress_files);
+        let dirs_only = rules.iter().any(|r| r.dirs_only);
+        if dirs_only || !suppress {
+            candidates.extend(self.complete_path(word, None, dirs, dirs_only));
+        }
+        candidates.sort();
+        candidates.dedup();
+        candidates
+    }
+
     /// File/directory completion for an argument word. `word` is the text
     /// after any opening quote. `home_override` is for tests; `None` reads
-    /// $HOME (or USERPROFILE on Windows).
+    /// $HOME (or USERPROFILE on Windows). `dirs_only` keeps directories
+    /// only.
     fn complete_path(
         &self,
         word: &str,
         home_override: Option<&str>,
         dirs: &dyn DirSource,
+        dirs_only: bool,
     ) -> Vec<String> {
         let (dir_part, file_prefix) = match word.rfind('/') {
             Some(i) => (&word[..=i], &word[i + 1..]),
@@ -135,6 +180,9 @@ impl CompletionEngine {
         let hide_dots = !file_prefix.starts_with('.');
         let mut candidates = Vec::new();
         for entry in dirs.list_dir(&base) {
+            if dirs_only && !entry.is_dir {
+                continue;
+            }
             if hide_dots && entry.name.starts_with('.') {
                 continue;
             }
@@ -175,6 +223,21 @@ fn extract_word(line: &str, pos: usize) -> (usize, usize, &str) {
     let word = &line[start..pos];
     let quote_len = usize::from(word.starts_with('"') || word.starts_with('\''));
     (start, quote_len, word)
+}
+
+/// The word immediately before the word being completed: the command name
+/// an argument-position rule lookup applies to.
+fn command_word_before(prefix: &str) -> String {
+    let bytes = prefix.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && !WORD_DELIMITERS.contains(&(bytes[start - 1] as char)) {
+        start -= 1;
+    }
+    prefix[start..end].to_string()
 }
 
 fn is_command_position(prefix: &str) -> bool {
@@ -510,6 +573,110 @@ mod tests {
         };
         let (_, cands) = eng.complete_line("echo n", 6, &dirs);
         assert_eq!(cands, vec!["Notes.txt".to_string()]);
+    }
+
+    #[test]
+    fn manual_rules_complete_candidates_in_argument_position() {
+        let mut eng = engine();
+        eng.completions.insert(
+            "probe".to_string(),
+            vec![CompletionRule {
+                candidates: vec!["alpha".into(), "beta".into()],
+                ..Default::default()
+            }],
+        );
+        let dirs = FileDirs { entries: file_entries() };
+        let (_, cands) = eng.complete_line("probe a", 7, &dirs);
+        assert_eq!(cands, vec!["alpha".to_string()]);
+        let (_, cands) = eng.complete_line("probe ", 6, &dirs);
+        assert_eq!(
+            cands,
+            vec!["alpha".to_string(), "beta".to_string(), "main.rs".to_string(), "notes.txt".to_string(), "src/".to_string(), "tests/".to_string()]
+        );
+    }
+
+    #[test]
+    fn suppress_files_rule_gives_empty_when_no_candidate_match() {
+        let mut eng = engine();
+        eng.completions.insert(
+            "probe".to_string(),
+            vec![CompletionRule {
+                candidates: vec!["alpha".into()],
+                suppress_files: true,
+                ..Default::default()
+            }],
+        );
+        let dirs = FileDirs { entries: file_entries() };
+        let (_, cands) = eng.complete_line("probe z", 7, &dirs);
+        assert!(cands.is_empty());
+        let (_, cands) = eng.complete_line("probe ", 6, &dirs);
+        assert_eq!(cands, vec!["alpha".to_string()]);
+    }
+
+    #[test]
+    fn accumulated_rules_union_candidates_and_suppression() {
+        let mut eng = engine();
+        eng.completions.insert(
+            "probe".to_string(),
+            vec![
+                CompletionRule {
+                    candidates: vec!["alpha".into()],
+                    ..Default::default()
+                },
+                CompletionRule {
+                    candidates: vec!["beta".into()],
+                    suppress_files: true,
+                    ..Default::default()
+                },
+            ],
+        );
+        let dirs = FileDirs { entries: file_entries() };
+        let (_, cands) = eng.complete_line("probe ", 6, &dirs);
+        assert_eq!(cands, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[test]
+    fn cd_completes_directories_only() {
+        let mut eng = engine();
+        eng.completions.insert(
+            "cd".to_string(),
+            vec![CompletionRule {
+                suppress_files: true,
+                dirs_only: true,
+                ..Default::default()
+            }],
+        );
+        let dirs = FileDirs { entries: file_entries() };
+        let (_, cands) = eng.complete_line("cd ", 3, &dirs);
+        assert_eq!(cands, vec!["src/".to_string(), "tests/".to_string()]);
+        let (_, cands) = eng.complete_line("cd m", 4, &dirs);
+        assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn set_completes_option_flags() {
+        let mut eng = engine();
+        eng.completions.insert(
+            "set".to_string(),
+            vec![CompletionRule {
+                candidates: vec!["-l".into(), "-x".into(), "-U".into(), "-e".into(), "-q".into()],
+                ..Default::default()
+            }],
+        );
+        let dirs = FileDirs { entries: file_entries() };
+        let (_, cands) = eng.complete_line("set -", 5, &dirs);
+        assert_eq!(
+            cands,
+            vec!["-U".to_string(), "-e".to_string(), "-l".to_string(), "-q".to_string(), "-x".to_string()]
+        );
+    }
+
+    #[test]
+    fn command_word_before_extracts_command_name() {
+        assert_eq!(command_word_before("echo "), "echo");
+        assert_eq!(command_word_before("a; echo "), "echo");
+        assert_eq!(command_word_before("echo"), "echo");
+        assert_eq!(command_word_before(""), "");
     }
 
     #[test]

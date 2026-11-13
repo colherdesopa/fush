@@ -1,5 +1,6 @@
 use crate::ast::{Expr, ExprKind, IndexSpec, Stmt};
 use crate::ast::ExprKind::QuotedCmdSubst;
+use crate::completion::CompletionRule;
 use crate::exec;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -82,11 +83,13 @@ pub struct Runtime {
     pub abbrs: HashMap<String, String>,
     pub function_depth: usize,
     pub function_return_stack: Vec<Option<i32>>,
+    /// Manual per-command completion rules (`complete -c cmd ...`), session-only.
+    pub completions: HashMap<String, Vec<CompletionRule>>,
 }
 
 impl Runtime {
     pub fn new() -> Runtime {
-        Runtime {
+        let mut rt = Runtime {
             env: Env::default(),
             status: 0,
             exited: None,
@@ -95,7 +98,31 @@ impl Runtime {
             abbrs: HashMap::new(),
             function_depth: 0,
             function_return_stack: Vec::new(),
-        }
+            completions: HashMap::new(),
+        };
+        rt.register_default_completions();
+        rt
+    }
+
+    /// Built-in completion rules shipped at startup: `set` completes its
+    /// option flags, `cd` completes directories only.
+    fn register_default_completions(&mut self) {
+        self.completions.insert(
+            "set".to_string(),
+            vec![CompletionRule {
+                candidates: vec!["-l".into(), "-x".into(), "-U".into(), "-e".into(), "-q".into()],
+                ..Default::default()
+            }],
+        );
+        self.completions.insert(
+            "cd".to_string(),
+            vec![CompletionRule {
+                candidates: Vec::new(),
+                suppress_files: true,
+                dirs_only: true,
+                description: None,
+            }],
+        );
     }
 
     pub fn register_function(&mut self, name: &str, params: Vec<String>, body: Vec<Stmt>) {

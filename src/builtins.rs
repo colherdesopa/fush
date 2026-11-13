@@ -1,3 +1,4 @@
+use crate::completion::CompletionRule;
 use crate::runtime::Runtime;
 
 pub enum BuiltinResult {
@@ -22,6 +23,7 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "abbr" => Some(abbr(rt, args)),
         "true" => Some(true_builtin(rt, args)),
         "false" => Some(false_builtin(rt, args)),
+        "complete" => Some(complete(rt, args)),
         _ => None,
     }
 }
@@ -430,6 +432,103 @@ fn is_executable(_path: &str) -> bool {
     false
 }
 
+fn complete(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    let mut cmd: Option<String> = None;
+    let mut erase = false;
+    let mut suppress_files = false;
+    let mut candidates: Vec<String> = Vec::new();
+    let mut description: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-c" => {
+                i += 1;
+                match args.get(i) {
+                    Some(v) => cmd = Some(v.clone()),
+                    None => return err("complete: -c requires a command name"),
+                }
+            }
+            "-e" => erase = true,
+            "-f" => suppress_files = true,
+            "-a" => {
+                i += 1;
+                match args.get(i) {
+                    Some(v) => candidates.extend(split_unquoted_spaces(v)),
+                    None => return err("complete: -a requires a candidate list"),
+                }
+            }
+            "-d" => {
+                i += 1;
+                match args.get(i) {
+                    Some(v) => description = Some(v.clone()),
+                    None => return err("complete: -d requires a description"),
+                }
+            }
+            other => {
+                let _ = other;
+                return err("complete: unknown option");
+            }
+        }
+        i += 1;
+    }
+    let Some(cmd) = cmd else {
+        return err("complete: -c requires a command name");
+    };
+    if erase {
+        rt.completions.remove(&cmd);
+        return BuiltinResult::Done {
+            status: 0,
+            out: None,
+        };
+    }
+    let rule = CompletionRule {
+        candidates,
+        suppress_files,
+        dirs_only: false,
+        description,
+    };
+    rt.completions.entry(cmd).or_default().push(rule);
+    BuiltinResult::Done {
+        status: 0,
+        out: None,
+    }
+}
+
+/// Word-split on unquoted spaces: quotes group words, quote characters
+/// themselves are stripped (fish strips them; quoted candidate forms are
+/// not required this milestone).
+fn split_unquoted_spaces(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for ch in value.chars() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else {
+                    cur.push(ch);
+                }
+            }
+            None => {
+                if ch == '\"' || ch == '\'' {
+                    quote = Some(ch);
+                } else if ch.is_whitespace() {
+                    if !cur.is_empty() {
+                        parts.push(std::mem::take(&mut cur));
+                    }
+                } else {
+                    cur.push(ch);
+                }
+            }
+        }
+    }
+    if !cur.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
 fn err(msg: &str) -> BuiltinResult {
     eprintln!("{msg}");
     BuiltinResult::Done {
@@ -772,5 +871,73 @@ mod tests {
     fn unknown_builtin_returns_none() {
         let mut rt = Runtime::new();
         assert!(run(&mut rt, "definitely-not-a-builtin", &[]).is_none());
+    }
+
+    #[test]
+    fn complete_registers_and_accumulates_rules() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-a", "one two"]), 0);
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-a", "three"]), 0);
+        let rules = &rt.completions["probe"];
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].candidates, vec!["one", "two"]);
+        assert_eq!(rules[1].candidates, vec!["three"]);
+    }
+
+    #[test]
+    fn complete_e_erases_rules() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-a", "one"]), 0);
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-e"]), 0);
+        assert!(!rt.completions.contains_key("probe"));
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-e"]), 0);
+    }
+
+    #[test]
+    fn complete_f_sets_suppression_and_d_stores_description() {
+        let mut rt = Runtime::new();
+        assert_eq!(
+            status_of(&mut rt, "complete", &["-c", "probe", "-f", "-d", "the desc"]),
+            0
+        );
+        let rules = &rt.completions["probe"];
+        assert!(rules[0].suppress_files);
+        assert_eq!(rules[0].description.as_deref(), Some("the desc"));
+        assert!(rules[0].candidates.is_empty());
+    }
+
+    #[test]
+    fn complete_a_word_splits_on_unquoted_spaces() {
+        let mut rt = Runtime::new();
+        status_of(&mut rt, "complete", &["-c", "probe", "-a", "a b  c"]);
+        assert_eq!(rt.completions["probe"][0].candidates, vec!["a", "b", "c"]);
+        status_of(&mut rt, "complete", &["-c", "probe", "-a", "\"x y\" z"]);
+        assert_eq!(rt.completions["probe"][1].candidates, vec!["x y", "z"]);
+    }
+
+    #[test]
+    fn complete_without_rules_and_without_a_is_pure_registration() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe"]), 0);
+        assert!(rt.completions["probe"][0].candidates.is_empty());
+    }
+
+    #[test]
+    fn complete_requires_c_and_known_options() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "complete", &[]), 1);
+        assert_eq!(status_of(&mut rt, "complete", &["-c"]), 1);
+        assert_eq!(status_of(&mut rt, "complete", &["-c", "p", "-z"]), 1);
+    }
+
+    #[test]
+    fn default_completions_registered_at_startup() {
+        let rt = Runtime::new();
+        let set_rules = &rt.completions["set"];
+        assert!(set_rules[0].candidates.contains(&"-l".to_string()));
+        assert!(set_rules[0].candidates.contains(&"-q".to_string()));
+        let cd_rules = &rt.completions["cd"];
+        assert!(cd_rules[0].suppress_files);
+        assert!(cd_rules[0].dirs_only);
     }
 }
