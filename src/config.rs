@@ -37,6 +37,50 @@ pub fn config_path() -> Option<PathBuf> {
     Some(dir.join("config.fish"))
 }
 
+/// Primary config path for an injected environment, mirroring
+/// `config_dir_for`: `<base>/.config/fush/config.fush`.
+#[allow(dead_code)]
+pub fn primary_config_path_for(
+    home: Option<&str>,
+    userprofile: Option<&str>,
+    windows: bool,
+) -> Option<PathBuf> {
+    Some(config_dir_for(home, userprofile, windows)?.join("config.fush"))
+}
+
+/// Primary config path, `<config_dir>/config.fush`. Unlike `config_file`,
+/// no environment override applies here.
+#[allow(dead_code)]
+pub fn primary_config_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let userprofile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    primary_config_path_for(
+        home.as_deref().and_then(|p| p.to_str()),
+        userprofile.as_deref().and_then(|p| p.to_str()),
+        cfg!(windows),
+    )
+}
+
+/// Primary config path with the FUSH_CONFIG override; defaults to
+/// `primary_config_path()`.
+#[allow(dead_code)]
+pub fn primary_config_file() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("FUSH_CONFIG") {
+        return Some(PathBuf::from(p));
+    }
+    primary_config_path()
+}
+
+/// Source the primary config (`config.fush`) into `rt`. Missing file is
+/// silent; parse or runtime errors print `fush: config: <msg>` and the
+/// shell continues, matching `source_config`.
+#[allow(dead_code)]
+pub fn source_primary_config(rt: &mut Runtime) {
+    if let Some(path) = primary_config_file() {
+        source_config_path(rt, &path);
+    }
+}
+
 /// Config path with the FUSH_CONFIG override; defaults to config_path().
 #[allow(dead_code)]
 pub fn config_file() -> Option<PathBuf> {
@@ -123,6 +167,62 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(got_env, Some(vec!["hello".to_string()]));
         assert_eq!(got_abbr, Some("git status".to_string()));
+    }
+
+    #[test]
+    fn primary_config_path_is_config_fush() {
+        let dir = config_dir_for(Some("/h"), None, false).unwrap();
+        let path = primary_config_path_for(Some("/h"), None, false).unwrap();
+        assert_eq!(path, dir.join("config.fush"));
+    }
+
+    #[test]
+    fn primary_config_path_uses_userprofile_on_windows() {
+        let userprofile = r"C:\Users\alice";
+        let path = PathBuf::from(userprofile)
+            .join(".config")
+            .join("fush")
+            .join("config.fush");
+        assert_eq!(
+            path,
+            primary_config_path_for(None, Some(userprofile), true).unwrap()
+        );
+    }
+
+    #[test]
+    fn primary_config_file_prefers_fush_config() {
+        let prev = std::env::var_os("FUSH_CONFIG");
+        // SAFETY: tests in this module run serially; no other thread reads env.
+        unsafe {
+            std::env::set_var("FUSH_CONFIG", "/tmp/fush-custom.fush");
+        }
+        let got = primary_config_file();
+        // SAFETY: restoring the prior value in the same test.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("FUSH_CONFIG", v),
+                None => std::env::remove_var("FUSH_CONFIG"),
+            }
+        }
+        assert_eq!(got, Some(PathBuf::from("/tmp/fush-custom.fush")));
+    }
+
+    #[test]
+    fn source_primary_config_missing_file_is_silent() {
+        let prev = std::env::var_os("FUSH_CONFIG");
+        // SAFETY: tests in this module run serially; no other thread reads env.
+        unsafe {
+            std::env::set_var("FUSH_CONFIG", "/tmp/fush-no-such-config-file");
+        }
+        let mut rt = Runtime::new();
+        source_primary_config(&mut rt);
+        // SAFETY: restoring the prior value in the same test.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("FUSH_CONFIG", v),
+                None => std::env::remove_var("FUSH_CONFIG"),
+            }
+        }
     }
 
     #[test]
