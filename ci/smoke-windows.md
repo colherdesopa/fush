@@ -120,3 +120,19 @@ Notes:
 - Native Linux verification remained green: `cargo test` (148 unit + 70 integration), `cargo clippy --all-targets -- -D warnings`, `cargo build --release`.
 
 - The original `and/or after block` probe used `true` as the condition command. `true` is not a Windows program (`where true` finds nothing) and not a fush builtin, so the failure was a bad probe, not a shell bug. Re-probed with `if echo a; end; and echo yes` → `a`, `yes` — block chains work on the release build. `true`/`false` builtins are deferred to the next milestone; `test 1 -eq 1` covers the condition-command need today.
+
+## Config.fush milestone
+
+Environment: same as the config milestone (WSL CachyOS host, rustc 1.97.0, target x86_64-pc-windows-gnu, `C:\Users\Francisco\fush-smoke\fush.exe`, batch files driven via `cmd.exe /c`). All config paths were pinned with `FUSH_CONFIG` / `FUSH_FISH_CONFIG` / `FUSH_UNIVERSALS` set inside the batch files; probe files were deleted after the smoke. Each batch file starts with `cd /d C:\Users\Francisco\fush-smoke` to avoid the WSL UNC-path startup issue.
+
+Smoke matrix for the config.fush milestone:
+| Case | Expected | Result | Notes |
+| --- | --- | --- | --- |
+| `fush.exe -c "echo hi"` with NO configs (`FUSH_CONFIG`/`FUSH_FISH_CONFIG` point at nonexistent files) | `hi`, no prompt, exit 0 | PASS | startup tolerates missing config.fush and config.fish |
+| config.fush via `FUSH_CONFIG` containing `set w x`, then `fush.exe -c "echo $w"` | `x` | PASS | config.fush is sourced as the primary config |
+| config.fish via `FUSH_FISH_CONFIG` + NO config.fush, `-c` mode | `hi`, no prompt, no import, exit 0, no config.fush created | PASS | verified with `if exist` after the run: config.fush absent; import is interactive-only |
+| universals round-trip: `FUSH_UNIVERSALS` set, `set -U rv z` then `echo got $rv` in separate invocations | `got z` | PASS | regression: universals persist across sessions |
+
+Notes:
+- All invocations went through `.cmd` batch files with env vars set inside the batch (`set FUSH_CONFIG=...`); nested quoting through `cmd.exe /c` from WSL remains unreliable.
+- Native Linux verification: `cargo test` (158 unit + 72 integration) and `cargo clippy --all-targets -- -D warnings` green.
