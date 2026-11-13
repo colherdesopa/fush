@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-const BUILTIN_NAMES: &[&str] = &["set", "echo", "cd", "exit", "test", "functions", "return"];
+const BUILTIN_NAMES: &[&str] = &["set", "echo", "cd", "exit", "test", "functions", "return", "abbr"];
 
 type FushEditor = Editor<FushHelper, DefaultHistory>;
 
@@ -152,15 +152,16 @@ pub fn run_repl() -> i32 {
                 if line.trim().is_empty() && buffer.is_empty() {
                     continue;
                 }
+                let expanded = expand_abbr(&rt.abbrs, &line);
                 if !buffer.is_empty() {
                     buffer.push('\n');
                 }
-                buffer.push_str(&line);
-                if !line.trim().is_empty() {
+                buffer.push_str(&expanded);
+                if !expanded.trim().is_empty() {
                     if let Some(helper) = editor.helper_mut() {
-                        helper.suggester.push(&line);
+                        helper.suggester.push(&expanded);
                     }
-                    let _ = editor.add_history_entry(line.as_str());
+                    let _ = editor.add_history_entry(expanded.as_str());
                 }
                 match parser::parse(&buffer) {
                     Ok(program) => {
@@ -348,6 +349,26 @@ fn history_path() -> Option<PathBuf> {
     Some(dir.join("history"))
 }
 
+fn expand_abbr(table: &std::collections::HashMap<String, String>, line: &str) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() {
+        return line.to_string();
+    }
+
+    let first_word_start = line.len() - trimmed.len();
+    let first_word_end = trimmed
+        .find(char::is_whitespace)
+        .unwrap_or(trimmed.len());
+    let word = &trimmed[..first_word_end];
+    let Some(expansion) = table.get(word) else {
+        return line.to_string();
+    };
+
+    let prefix = &line[..first_word_start];
+    let suffix = &trimmed[first_word_end..];
+    format!("{prefix}{expansion}{suffix}")
+}
+
 fn save_history_if_possible(editor: &mut FushEditor) {
     if let Some(path) = history_path() {
         let _ = editor.save_history(&path);
@@ -453,5 +474,19 @@ mod tests {
         let ctx = Context::new(&history);
 
         assert_eq!(helper.hint_for("ls", 2, &ctx, true, None, true), None);
+    }
+
+    #[test]
+    fn expand_abbr_replaces_only_the_first_word() {
+        let mut table = std::collections::HashMap::new();
+        table.insert("gs".to_string(), "git status".to_string());
+        table.insert("hi".to_string(), "hello".to_string());
+
+        assert_eq!(expand_abbr(&table, "gs"), "git status");
+        assert_eq!(expand_abbr(&table, "gs echo"), "git status echo");
+        assert_eq!(expand_abbr(&table, "echo gs"), "echo gs");
+        assert_eq!(expand_abbr(&table, "hi hi"), "hello hi");
+        assert_eq!(expand_abbr(&table, "  gs  echo"), "  git status  echo");
+        assert_eq!(expand_abbr(&table, ""), "");
     }
 }

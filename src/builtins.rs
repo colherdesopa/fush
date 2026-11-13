@@ -19,8 +19,78 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "test" => Some(test(rt, args)),
         "functions" => Some(functions(rt, args)),
         "return" => Some(return_builtin(rt, args)),
+        "abbr" => Some(abbr(rt, args)),
         _ => None,
     }
+}
+
+fn abbr(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        let mut lines: Vec<String> = rt
+            .abbrs
+            .iter()
+            .map(|(name, expansion)| format!("{name} {expansion}"))
+            .collect();
+        lines.sort();
+        let out = if lines.is_empty() { String::new() } else { format!("{}\n", lines.join("\n")) };
+        return BuiltinResult::Done {
+            status: 0,
+            out: if out.is_empty() { None } else { Some(out.into_bytes()) },
+        };
+    }
+
+    let first = args[0].as_str();
+    if first == "-l" || first == "--list" {
+        let mut names: Vec<String> = rt.abbrs.keys().cloned().collect();
+        names.sort();
+        let out = if names.is_empty() { String::new() } else { format!("{}\n", names.join("\n")) };
+        return BuiltinResult::Done {
+            status: 0,
+            out: if out.is_empty() { None } else { Some(out.into_bytes()) },
+        };
+    }
+
+    if first == "-e" || first == "--erase" {
+        let Some(name) = args.get(1) else {
+            return err("fush: abbr: missing abbreviation name");
+        };
+        if rt.abbrs.remove(name).is_none() {
+            return BuiltinResult::Done { status: 1, out: None };
+        }
+        return BuiltinResult::Done { status: 0, out: None };
+    }
+
+    if first == "-a" || first == "--add" {
+        let Some(name) = args.get(1) else {
+            return err("fush: abbr: missing abbreviation name");
+        };
+        let value = args[2..].join(" ");
+        rt.abbrs.insert(name.clone(), value);
+        return BuiltinResult::Done { status: 0, out: None };
+    }
+
+    if args.len() == 1 {
+        let name = &args[0];
+        return match rt.abbrs.get(name) {
+            Some(expansion) => BuiltinResult::Done {
+                status: 0,
+                out: Some(format!("{name} {expansion}\n").into_bytes()),
+            },
+            None => BuiltinResult::Done {
+                status: 1,
+                out: None,
+            },
+        };
+    }
+
+    if !first.starts_with('-') {
+        let name = &args[0];
+        let value = args[1..].join(" ");
+        rt.abbrs.insert(name.clone(), value);
+        return BuiltinResult::Done { status: 0, out: None };
+    }
+
+    err(&format!("fush: abbr: unknown option '{first}'"))
 }
 
 fn functions(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -461,6 +531,43 @@ mod tests {
             }
             _ => panic!("expected functions output"),
         }
+    }
+
+    #[test]
+    fn abbr_adds_lists_and_overwrites() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "abbr", &["-a", "gs", "git", "status"]), 0);
+        assert_eq!(status_of(&mut rt, "abbr", &["-a", "gs", "git", "status", "--short"]), 0);
+        assert_eq!(rt.abbrs.get("gs"), Some(&"git status --short".to_string()));
+
+        match run(&mut rt, "abbr", &[]) {
+            Some(BuiltinResult::Done { out: Some(out), .. }) => {
+                assert_eq!(String::from_utf8(out).unwrap(), "gs git status --short\n");
+            }
+            _ => panic!("expected abbr list output"),
+        }
+    }
+
+    #[test]
+    fn abbr_list_names_only() {
+        let mut rt = Runtime::new();
+        rt.abbrs.insert("zeta".to_string(), "echo z".to_string());
+        rt.abbrs.insert("alpha".to_string(), "echo a".to_string());
+        match run(&mut rt, "abbr", &["-l".to_string()]) {
+            Some(BuiltinResult::Done { out: Some(out), .. }) => {
+                assert_eq!(String::from_utf8(out).unwrap(), "alpha\nzeta\n");
+            }
+            _ => panic!("expected name list output"),
+        }
+    }
+
+    #[test]
+    fn abbr_erase_removes_and_statuses_missing() {
+        let mut rt = Runtime::new();
+        rt.abbrs.insert("gs".to_string(), "git status".to_string());
+        assert_eq!(status_of(&mut rt, "abbr", &["-e", "gs"]), 0);
+        assert_eq!(rt.abbrs.get("gs"), None);
+        assert_eq!(status_of(&mut rt, "abbr", &["-e", "missing"]), 1);
     }
 
     #[test]

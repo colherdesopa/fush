@@ -77,6 +77,7 @@ pub struct Runtime {
     pub exited: Option<i32>,
     pub(crate) capture: Option<Vec<u8>>,
     pub functions: HashMap<String, Rc<FunctionDef>>,
+    pub abbrs: HashMap<String, String>,
     pub function_depth: usize,
     pub function_return_stack: Vec<Option<i32>>,
 }
@@ -89,6 +90,7 @@ impl Runtime {
             exited: None,
             capture: None,
             functions: HashMap::new(),
+            abbrs: HashMap::new(),
             function_depth: 0,
             function_return_stack: Vec::new(),
         }
