@@ -12,6 +12,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "abbr",
     "true",
     "false",
+    "complete",
 ];
 
 const WORD_DELIMITERS: &[char] = &[' ', '\t', '\n', '\r', ';', '|', '&', '(', ')', '<', '>'];
