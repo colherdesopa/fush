@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn exported_vars_become_child_overrides() {
         let mut rt = Runtime::new();
-        rt.env.set_global("PATH", vec!["/bin", "/usr/bin"].iter().map(|s| s.to_string()).collect());
+        rt.env.set_global("PATH", vec!["/bin".to_string(), "/usr/bin".to_string()]);
         rt.env.export("PATH");
         rt.env.set_global("PRIVATE", vec!["x".into()]);
         let overrides = rt.env.child_overrides();

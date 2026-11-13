@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::Command;
 
 fn fush(script: &str) -> (String, String, i32) {
@@ -155,7 +156,50 @@ fn for_var_scoped() {
 #[test]
 fn while_loops() {
     let (out, _, _) = fush("set n 0; while test $n -lt 3; set n (expr $n + 1); end; echo $n");
-    assert_eq!(out.trim().split_whitespace().last(), Some("3"));
+    assert_eq!(out.split_whitespace().last(), Some("3"));
+}
+
+#[test]
+fn repl_via_piped_stdin_echo_and_exit() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    child.stdin.as_mut().unwrap().write_all(b"echo hi\nexit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
+    assert_eq!(out.status.code(), Some(0));
+}
+
+#[test]
+fn repl_multiline_block_via_piped_stdin() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    child.stdin.as_mut().unwrap().write_all(b"if test 1 -eq 1\n  echo ok\nend\nexit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "ok\n");
+    assert_eq!(out.status.code(), Some(0));
+}
+
+#[test]
+fn repl_unknown_command_keeps_running_after_error() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    child.stdin.as_mut().unwrap().write_all(b"nope\necho ok\nexit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("ok\n"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("fush:"));
+    assert_eq!(out.status.code(), Some(0));
 }
 
 #[test]

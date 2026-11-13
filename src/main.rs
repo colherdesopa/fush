@@ -3,16 +3,19 @@ mod builtins;
 mod exec;
 mod lexer;
 mod parser;
+mod repl;
 mod runtime;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut ast_mode = false;
+    let mut interactive = false;
     let mut src: Option<String> = None;
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--ast" => ast_mode = true,
+            "-i" => interactive = true,
             "-c" => match iter.next().cloned() {
                 Some(s) => src = Some(s),
                 None => {
@@ -39,6 +42,9 @@ fn main() {
     if ast_mode {
         run_ast_mode(&src);
         return;
+    }
+    if interactive || src.is_empty() {
+        std::process::exit(repl::run_repl());
     }
     let program = match parser::parse(&src) {
         Ok(p) => p,
