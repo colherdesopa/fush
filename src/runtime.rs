@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprKind, Stmt};
+use crate::ast::{Expr, ExprKind, IndexSpec, Stmt};
 use crate::ast::ExprKind::QuotedCmdSubst;
 use crate::exec;
 use std::collections::{HashMap, HashSet};
@@ -57,8 +57,6 @@ impl Env {
         self.locals.pop();
     }
 
-    /// Name/value pairs to overlay on the inherited process environment
-    /// when spawning child processes.
     pub fn child_overrides(&self) -> Vec<(String, String)> {
         self.globals
             .iter()
@@ -68,9 +66,6 @@ impl Env {
     }
 }
 
-/// Interpreter state: the environment, the last pipeline status ($status),
-/// and an optional stdout capture buffer used for command substitution and
-/// builtin-in-pipeline capture.
 pub struct Runtime {
     pub env: Env,
     pub status: i32,
@@ -100,23 +95,49 @@ impl Runtime {
         self.functions.insert(name.to_string(), Rc::new(FunctionDef { params, body }));
     }
 
-    /// Expand one Expr into fish-style words.
-    ///
-    /// - Literal: the text as a single word.
-    /// - Var: the variable's values as separate words; undefined expands to
-    ///   zero words.
-    /// - CmdSubst: run the statements, capture stdout, trim trailing
-    ///   newlines, split on newlines into words.
-    /// - QuotedCmdSubst: like CmdSubst but expands to exactly one word with
-    ///   embedded newlines preserved (fish: quoted command substitution is
-    ///   not word-split).
-    /// - Concat: parts are joined into a single word; var parts contribute
-    ///   their values joined with spaces (documented simplification of fish's
-    ///   cartesian product for multi-value vars inside concatenation).
+    fn indexed_values(&self, name: &str, index: &IndexSpec) -> Vec<String> {
+        let values = self.env.get(name).unwrap_or_default();
+        if values.is_empty() {
+            return Vec::new();
+        }
+        match index {
+            IndexSpec::At(i) => {
+                let idx = match *i {
+                    v if v > 0 => v - 1,
+                    v if v < 0 => (values.len() as isize) + v,
+                    _ => return Vec::new(),
+                };
+                if idx < 0 || idx as usize >= values.len() {
+                    Vec::new()
+                } else {
+                    vec![values[idx as usize].clone()]
+                }
+            }
+            IndexSpec::Range { start, end } => {
+                let start_idx = match start {
+                    Some(v) => {
+                        let v = *v;
+                        if v >= 0 { (v - 1).max(0) as usize } else { ((values.len() as isize) + v).max(0) as usize }
+                    }
+                    None => 0,
+                };
+                let end_idx = match end {
+                    Some(v) => {
+                        let v = *v;
+                        if v >= 0 { (v - 1).min(values.len() as isize - 1) as usize } else { ((values.len() as isize) + v).max(0) as usize }
+                    }
+                    None => values.len().saturating_sub(1),
+                };
+                if start_idx > end_idx { Vec::new() } else { values[start_idx..=end_idx].to_vec() }
+            }
+        }
+    }
+
     pub fn expand(&mut self, e: &Expr) -> Result<Vec<String>, String> {
         match e.kind {
             ExprKind::Literal => Ok(vec![e.text.clone()]),
             ExprKind::Var => Ok(self.env.get(&e.text).unwrap_or_default()),
+            ExprKind::Index => Ok(self.indexed_values(&e.text, e.index.as_ref().expect("index expr has index"))),
             ExprKind::CmdSubst => {
                 let out = self.capture_stmts(&e.stmts)?;
                 Ok(cmdsubst_words(&out))
@@ -135,6 +156,10 @@ impl Runtime {
                         ExprKind::Literal => word.push_str(&part.text),
                         ExprKind::Var => {
                             let vals = self.env.get(&part.text).unwrap_or_default();
+                            word.push_str(&vals.join(" "));
+                        }
+                        ExprKind::Index => {
+                            let vals = self.indexed_values(&part.text, part.index.as_ref().expect("index expr has index"));
                             word.push_str(&vals.join(" "));
                         }
                         ExprKind::CmdSubst => {
@@ -160,7 +185,6 @@ impl Runtime {
         }
     }
 
-    /// Expand an Expr and require exactly one word.
     pub fn expand_one(&mut self, e: &Expr) -> Result<String, String> {
         let words = self.expand(e)?;
         match words.len() {
@@ -170,7 +194,6 @@ impl Runtime {
         }
     }
 
-    /// Run statements with stdout captured; restores the previous capture.
     pub(crate) fn capture_stmts(&mut self, stmts: &[Stmt]) -> Result<Vec<u8>, String> {
         let saved = self.capture.take();
         self.capture = Some(Vec::new());
@@ -182,8 +205,6 @@ impl Runtime {
     }
 }
 
-/// Turn captured command-substitution stdout into words: trim trailing
-/// newlines, then split on newlines (fish behavior).
 pub(crate) fn cmdsubst_words(out: &[u8]) -> Vec<String> {
     let s = String::from_utf8_lossy(out);
     let trimmed = s.trim_end_matches('\n');
@@ -194,7 +215,6 @@ pub(crate) fn cmdsubst_words(out: &[u8]) -> Vec<String> {
     }
 }
 
-/// Minimal fnmatch-style glob: `*` (any run) and `?` (any single char).
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     glob_inner(pattern.as_bytes(), text.as_bytes())
 }
@@ -241,8 +261,8 @@ mod tests {
 
     #[test]
     fn var_expands_to_separate_words() {
-        let mut rt = rt_with(&[("x", &["a", "b", "c"])]);
-        let e = Expr::var(Default::default(), "x".into());
+        let mut rt = rt_with(&[("x", &["a", "b", "c"])])
+;        let e = Expr::var(Default::default(), "x".into());
         assert_eq!(rt.expand(&e).unwrap(), vec!["a", "b", "c"]);
     }
 
@@ -268,9 +288,21 @@ mod tests {
     }
 
     #[test]
+    fn index_and_slice_expand_as_list_selection() {
+        let mut rt = rt_with(&[("x", &["a", "b", "c"])])
+;        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(2))).unwrap(), vec!["b"]);
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(-1))).unwrap(), vec!["c"]);
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(1), end: Some(2) })).unwrap(), vec!["a", "b"]);
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: None, end: Some(2) })).unwrap(), vec!["a", "b"]);
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(2), end: None })).unwrap(), vec!["b", "c"]);
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(9))).unwrap(), Vec::<String>::new());
+        assert_eq!(rt.expand(&Expr::index(Default::default(), "missing".into(), IndexSpec::At(1))).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
     fn local_shadows_global_and_pop_restores() {
-        let mut rt = rt_with(&[("x", &["global"])]);
-        rt.env.push_scope();
+        let mut rt = rt_with(&[("x", &["global"])])
+;        rt.env.push_scope();
         rt.env.set_local("x", vec!["local".into()]);
         assert_eq!(rt.env.get("x"), Some(vec!["local".into()]));
         rt.env.pop_scope();

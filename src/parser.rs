@@ -16,6 +16,49 @@ struct Parser {
     i: usize,
 }
 
+fn parse_index_spec(raw: &str, pos: SourcePos) -> Result<crate::ast::IndexSpec, ParseError> {
+    let src = raw.trim();
+    if src.is_empty() {
+        return Err(ParseError {
+            message: "empty index spec".into(),
+            pos,
+            incomplete: false,
+        });
+    }
+    if let Some((lhs, rhs)) = src.split_once("..") {
+        let start = if lhs.is_empty() { None } else { Some(parse_index_int(lhs, pos)?) };
+        let end = if rhs.is_empty() { None } else { Some(parse_index_int(rhs, pos)?) };
+        Ok(crate::ast::IndexSpec::Range { start, end })
+    } else {
+        Ok(crate::ast::IndexSpec::At(parse_index_int(src, pos)?))
+    }
+}
+
+fn parse_index_int(src: &str, pos: SourcePos) -> Result<isize, ParseError> {
+    if src.is_empty() {
+        return Err(ParseError {
+            message: "index spec cannot be empty".into(),
+            pos,
+            incomplete: false,
+        });
+    }
+    if src.starts_with('+') {
+        return Err(ParseError {
+            message: "positive index values are not supported; use a signed integer".into(),
+            pos,
+            incomplete: false,
+        });
+    }
+    let parsed = src
+        .parse::<isize>()
+        .map_err(|_| ParseError {
+            message: format!("invalid index '{}', expected integer or range like '1..2'", src),
+            pos,
+            incomplete: false,
+        })?;
+    Ok(parsed)
+}
+
 impl Parser {
     fn peek(&self) -> &Token {
         &self.toks[self.i]
@@ -336,7 +379,14 @@ impl Parser {
 
     fn token_to_expr(&mut self, t: &Token) -> Result<Expr, ParseError> {
         match t.kind {
-            TokKind::Dollar => Ok(Expr::var(t.pos, t.text.clone())),
+            TokKind::Dollar => {
+                if let Some(raw) = &t.index {
+                    let index = parse_index_spec(raw, t.pos)?;
+                    Ok(Expr::index(t.pos, t.text.clone(), index))
+                } else {
+                    Ok(Expr::var(t.pos, t.text.clone()))
+                }
+            }
             TokKind::LParen => {
                 let stmts = self.parse_stmts(&[])?;
                 if stmts.is_empty() {
@@ -373,7 +423,11 @@ impl Parser {
 
     fn push_part(&mut self, pos: SourcePos, p: &QuotedPart, parts: &mut Vec<Expr>) -> Result<(), ParseError> {
         if p.is_var {
-            parts.push(Expr::var(pos, p.text.clone()));
+            if let Some(raw) = &p.index {
+                parts.push(Expr::index(pos, p.text.clone(), parse_index_spec(raw, pos)?));
+            } else {
+                parts.push(Expr::var(pos, p.text.clone()));
+            }
         } else if p.is_subst {
             let sub_toks = crate::lexer::lex(&p.text)?;
             let mut sub = Parser { toks: sub_toks, i: 0 };
@@ -487,6 +541,30 @@ mod tests {
         let a = &j.pipeline[0].args[1];
         assert_eq!(a.kind, ExprKind::Var);
         assert_eq!(a.text, "x");
+    }
+
+    #[test]
+    fn var_index_expr() {
+        let j = first_job("echo $x[2]");
+        let a = &j.pipeline[0].args[1];
+        assert_eq!(a.kind, ExprKind::Index);
+        assert_eq!(a.text, "x");
+        assert!(matches!(a.index, Some(crate::ast::IndexSpec::At(2))));
+    }
+
+    #[test]
+    fn var_slice_expr() {
+        let j = first_job("echo $x[1..3]");
+        let a = &j.pipeline[0].args[1];
+        assert_eq!(a.kind, ExprKind::Index);
+        assert!(matches!(a.index, Some(crate::ast::IndexSpec::Range { start: Some(1), end: Some(3) })));
+    }
+
+    #[test]
+    fn invalid_var_index_rejected() {
+        assert!(parse("echo $x[a]").is_err());
+        assert!(parse("echo $x[1").is_err());
+        assert!(parse("echo $x[1][2]").is_err());
     }
 
     #[test]
