@@ -307,6 +307,25 @@ fn switch_glob_question() {
 }
 
 #[test]
+fn switch_multibyte_glob_matches_char_wise() {
+    let (out, _, _) = fush("switch café; case *é*; echo hit; end");
+    assert_eq!(out, "hit\n");
+}
+
+#[test]
+fn switch_cmdsubst_runs_once() {
+    let (out, _, _) = fush("switch (echo one); case one; echo matched; end");
+    assert_eq!(out, "matched\n");
+}
+
+#[test]
+fn switch_multiword_value_errors_like_fish() {
+    let (_, err, code) = fush("set x a b; switch $x; case a; echo A; case b; echo B; end");
+    assert_eq!(code, 1);
+    assert!(err.contains("expanded to 2 words, expected one"));
+}
+
+#[test]
 fn redirect_out_and_in() {
     let tmp = std::env::temp_dir().join("fush-it-redir.txt");
     let _ = std::fs::remove_file(&tmp);

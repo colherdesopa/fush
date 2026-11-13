@@ -234,7 +234,9 @@ pub(crate) fn cmdsubst_words(out: &[u8]) -> Vec<String> {
 }
 
 pub fn glob_match(pattern: &str, text: &str) -> bool {
-    glob_inner(pattern.as_bytes(), text.as_bytes())
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+    let text_chars: Vec<char> = text.chars().collect();
+    glob_inner(&pattern_chars, &text_chars)
 }
 
 /// Normalizes a fish-style 1-based range bound to a 0-based index.
@@ -250,12 +252,12 @@ fn range_bound(v: isize, len: isize) -> Option<isize> {
     }
 }
 
-fn glob_inner(p: &[u8], t: &[u8]) -> bool {
+fn glob_inner(p: &[char], t: &[char]) -> bool {
     if p.is_empty() {
         return t.is_empty();
     }
     match p[0] {
-        b'*' => {
+        '*' => {
             for i in 0..=t.len() {
                 if glob_inner(&p[1..], &t[i..]) {
                     return true;
@@ -263,7 +265,7 @@ fn glob_inner(p: &[u8], t: &[u8]) -> bool {
             }
             false
         }
-        b'?' => !t.is_empty() && glob_inner(&p[1..], &t[1..]),
+        '?' => !t.is_empty() && glob_inner(&p[1..], &t[1..]),
         c => !t.is_empty() && t[0] == c && glob_inner(&p[1..], &t[1..]),
     }
 }
@@ -383,6 +385,16 @@ mod tests {
         assert!(!glob_match("a?c", "ac"));
         assert!(glob_match("*", ""));
         assert!(!glob_match("?", ""));
+    }
+
+    #[test]
+    fn glob_multibyte_matches_char_wise() {
+        assert!(glob_match("*é*", "café"));
+        assert!(glob_match("caf?", "café"));
+        assert!(glob_match("?", "é"));
+        assert!(!glob_match("??", "é"));
+        assert!(glob_match("a?c", "aéc"));
+        assert!(!glob_match("a?c", "ac"));
     }
 
     #[test]
