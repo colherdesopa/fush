@@ -1,5 +1,6 @@
 mod ast;
 mod builtins;
+mod config;
 mod exec;
 mod highlight;
 mod lexer;
@@ -29,15 +30,13 @@ fn main() {
                 println!("usage: fush [--ast] [-c 'command'] [script]");
                 return;
             }
-            _ => {
-                match std::fs::read_to_string(arg) {
-                    Ok(text) => src = Some(text),
-                    Err(e) => {
-                        eprintln!("fush: cannot read '{arg}': {e}");
-                        std::process::exit(1);
-                    }
+            _ => match std::fs::read_to_string(arg) {
+                Ok(text) => src = Some(text),
+                Err(e) => {
+                    eprintln!("fush: cannot read '{arg}': {e}");
+                    std::process::exit(1);
                 }
-            }
+            },
         }
     }
     let src = src.unwrap_or_default();

@@ -6,7 +6,18 @@ use std::borrow::Cow;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-const BUILTIN_NAMES: &[&str] = &["set", "echo", "cd", "exit", "test", "functions", "return", "abbr"];
+const BUILTIN_NAMES: &[&str] = &[
+    "set",
+    "echo",
+    "cd",
+    "exit",
+    "test",
+    "functions",
+    "return",
+    "abbr",
+    "true",
+    "false",
+];
 
 type FushEditor = Editor<FushHelper, DefaultHistory>;
 
@@ -20,7 +31,10 @@ pub struct FushHelper {
 impl FushHelper {
     fn new(suggester: Suggester) -> Self {
         Self {
-            builtins: BUILTIN_NAMES.iter().map(|name| (*name).to_string()).collect(),
+            builtins: BUILTIN_NAMES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
             suggester,
         }
     }
@@ -62,7 +76,11 @@ impl FushHelper {
         no_color: Option<&std::ffi::OsStr>,
         stdout_is_tty: bool,
     ) -> Option<String> {
-        if !enabled || Self::colors_disabled_for(no_color, stdout_is_tty) || line.is_empty() || pos != line.len() {
+        if !enabled
+            || Self::colors_disabled_for(no_color, stdout_is_tty)
+            || line.is_empty()
+            || pos != line.len()
+        {
             return None;
         }
         self.suggester.suggest(line)
@@ -109,7 +127,14 @@ impl rustyline::hint::Hinter for FushHelper {
     type Hint = String;
 
     fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<Self::Hint> {
-        self.hint_for(line, pos, ctx, true, std::env::var_os("NO_COLOR").as_deref(), std::io::stdout().is_terminal())
+        self.hint_for(
+            line,
+            pos,
+            ctx,
+            true,
+            std::env::var_os("NO_COLOR").as_deref(),
+            std::io::stdout().is_terminal(),
+        )
     }
 }
 
@@ -146,7 +171,11 @@ pub fn run_repl() -> i32 {
     let mut rt = runtime::Runtime::new();
     let mut buffer = String::new();
     loop {
-        let prompt = if buffer.is_empty() { prompt_text() } else { "...> ".to_string() };
+        let prompt = if buffer.is_empty() {
+            prompt_text()
+        } else {
+            "...> ".to_string()
+        };
         match editor.readline(&prompt) {
             Ok(line) => {
                 if line.trim().is_empty() && buffer.is_empty() {
@@ -271,7 +300,11 @@ fn hostname() -> String {
 
 #[cfg(not(windows))]
 fn hostname() -> String {
-    hostname_fallback(std::fs::read_to_string("/proc/sys/kernel/hostname").ok().as_deref())
+    hostname_fallback(
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .as_deref(),
+    )
 }
 
 fn hostname_fallback(value: Option<&str>) -> String {
@@ -324,7 +357,11 @@ fn history_dir() -> Option<PathBuf> {
     history_dir_for(home.as_deref(), userprofile.as_deref(), cfg!(windows))
 }
 
-fn history_dir_for(home: Option<&str>, userprofile: Option<&str>, windows: bool) -> Option<PathBuf> {
+fn history_dir_for(
+    home: Option<&str>,
+    userprofile: Option<&str>,
+    windows: bool,
+) -> Option<PathBuf> {
     let base = if windows {
         userprofile.or(home)?
     } else {
@@ -425,7 +462,10 @@ mod tests {
     #[test]
     fn history_dir_uses_local_share_dir_on_unix() {
         let home = "/tmp/fush-history-home";
-        let path = PathBuf::from(home).join(".local").join("share").join("fush");
+        let path = PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("fush");
         assert_eq!(path, history_dir_for(Some(home), None, false).unwrap());
     }
 
@@ -443,7 +483,11 @@ mod tests {
         let helper = FushHelper::new(suggester);
 
         assert!(helper.is_builtin("echo"));
+        assert!(helper.is_builtin("true"));
+        assert!(helper.is_builtin("false"));
         assert!(!helper.is_builtin("mystery"));
+        assert!(BUILTIN_NAMES.contains(&"true"));
+        assert!(BUILTIN_NAMES.contains(&"false"));
     }
 
     #[test]

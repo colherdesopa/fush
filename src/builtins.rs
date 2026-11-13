@@ -20,6 +20,8 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "functions" => Some(functions(rt, args)),
         "return" => Some(return_builtin(rt, args)),
         "abbr" => Some(abbr(rt, args)),
+        "true" => Some(true_builtin(rt, args)),
+        "false" => Some(false_builtin(rt, args)),
         _ => None,
     }
 }
@@ -32,10 +34,18 @@ fn abbr(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
             .map(|(name, expansion)| format!("{name} {expansion}"))
             .collect();
         lines.sort();
-        let out = if lines.is_empty() { String::new() } else { format!("{}\n", lines.join("\n")) };
+        let out = if lines.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", lines.join("\n"))
+        };
         return BuiltinResult::Done {
             status: 0,
-            out: if out.is_empty() { None } else { Some(out.into_bytes()) },
+            out: if out.is_empty() {
+                None
+            } else {
+                Some(out.into_bytes())
+            },
         };
     }
 
@@ -43,10 +53,18 @@ fn abbr(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     if first == "-l" || first == "--list" {
         let mut names: Vec<String> = rt.abbrs.keys().cloned().collect();
         names.sort();
-        let out = if names.is_empty() { String::new() } else { format!("{}\n", names.join("\n")) };
+        let out = if names.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", names.join("\n"))
+        };
         return BuiltinResult::Done {
             status: 0,
-            out: if out.is_empty() { None } else { Some(out.into_bytes()) },
+            out: if out.is_empty() {
+                None
+            } else {
+                Some(out.into_bytes())
+            },
         };
     }
 
@@ -55,9 +73,15 @@ fn abbr(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
             return err("fush: abbr: missing abbreviation name");
         };
         if rt.abbrs.remove(name).is_none() {
-            return BuiltinResult::Done { status: 1, out: None };
+            return BuiltinResult::Done {
+                status: 1,
+                out: None,
+            };
         }
-        return BuiltinResult::Done { status: 0, out: None };
+        return BuiltinResult::Done {
+            status: 0,
+            out: None,
+        };
     }
 
     if first == "-a" || first == "--add" {
@@ -66,7 +90,10 @@ fn abbr(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
         };
         let value = args[2..].join(" ");
         rt.abbrs.insert(name.clone(), value);
-        return BuiltinResult::Done { status: 0, out: None };
+        return BuiltinResult::Done {
+            status: 0,
+            out: None,
+        };
     }
 
     if args.len() == 1 {
@@ -87,7 +114,10 @@ fn abbr(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
         let name = &args[0];
         let value = args[1..].join(" ");
         rt.abbrs.insert(name.clone(), value);
-        return BuiltinResult::Done { status: 0, out: None };
+        return BuiltinResult::Done {
+            status: 0,
+            out: None,
+        };
     }
 
     err(&format!("fush: abbr: unknown option '{first}'"))
@@ -100,7 +130,11 @@ fn functions(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
         let out = names.join("\n");
         return BuiltinResult::Done {
             status: 0,
-            out: if out.is_empty() { None } else { Some(format!("{out}\n").into_bytes()) },
+            out: if out.is_empty() {
+                None
+            } else {
+                Some(format!("{out}\n").into_bytes())
+            },
         };
     }
 
@@ -110,11 +144,21 @@ fn functions(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
 
     let name = &args[0];
     let Some(func) = rt.functions.get(name) else {
-        return BuiltinResult::Done { status: 1, out: Some(format!("function {name}\nend\n").into_bytes()) };
+        return BuiltinResult::Done {
+            status: 1,
+            out: Some(format!("function {name}\nend\n").into_bytes()),
+        };
     };
-    let params = if func.params.is_empty() { String::new() } else { format!(" {}", func.params.join(" ")) };
+    let params = if func.params.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", func.params.join(" "))
+    };
     let out = format!("function {name}{params}\nend\n");
-    BuiltinResult::Done { status: 0, out: Some(out.into_bytes()) }
+    BuiltinResult::Done {
+        status: 0,
+        out: Some(out.into_bytes()),
+    }
 }
 
 fn return_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -132,14 +176,43 @@ fn return_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     if rt.function_return_stack.is_empty() {
         rt.status = code;
         rt.env.set_global("status", vec![code.to_string()]);
-        return BuiltinResult::Done { status: code, out: None };
+        return BuiltinResult::Done {
+            status: code,
+            out: None,
+        };
     }
 
-    let slot = rt.function_return_stack.last_mut().expect("return inside function");
+    let slot = rt
+        .function_return_stack
+        .last_mut()
+        .expect("return inside function");
     *slot = Some(code);
     rt.status = code;
     rt.env.set_global("status", vec![code.to_string()]);
-    BuiltinResult::Done { status: code, out: None }
+    BuiltinResult::Done {
+        status: code,
+        out: None,
+    }
+}
+
+fn true_builtin(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    if !args.is_empty() {
+        return err("fush: true: too many arguments");
+    }
+    BuiltinResult::Done {
+        status: 0,
+        out: None,
+    }
+}
+
+fn false_builtin(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    if !args.is_empty() {
+        return err("fush: false: too many arguments");
+    }
+    BuiltinResult::Done {
+        status: 1,
+        out: None,
+    }
 }
 
 fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -176,7 +249,10 @@ fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     } else {
         rt.env.set_global(name, values);
     }
-    BuiltinResult::Done { status: 0, out: None }
+    BuiltinResult::Done {
+        status: 0,
+        out: None,
+    }
 }
 
 fn echo(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -196,7 +272,10 @@ fn echo(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     if !no_newline {
         out.push('\n');
     }
-    BuiltinResult::Done { status: 0, out: Some(out.into_bytes()) }
+    BuiltinResult::Done {
+        status: 0,
+        out: Some(out.into_bytes()),
+    }
 }
 
 fn cd(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -212,8 +291,12 @@ fn cd(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
             if std::env::set_current_dir(&path).is_err() {
                 return err(&format!("fush: cd: cannot change to '{}'", path.display()));
             }
-            rt.env.set_global("PWD", vec![path.to_string_lossy().into_owned()]);
-            BuiltinResult::Done { status: 0, out: None }
+            rt.env
+                .set_global("PWD", vec![path.to_string_lossy().into_owned()]);
+            BuiltinResult::Done {
+                status: 0,
+                out: None,
+            }
         }
         Ok(_) => err(&format!("fush: cd: '{}' is not a directory", target)),
         Err(_) => err(&format!("fush: cd: no such file or directory: {}", target)),
@@ -309,7 +392,10 @@ fn is_executable(_path: &str) -> bool {
 
 fn err(msg: &str) -> BuiltinResult {
     eprintln!("{msg}");
-    BuiltinResult::Done { status: 1, out: None }
+    BuiltinResult::Done {
+        status: 1,
+        out: None,
+    }
 }
 
 #[cfg(test)]
@@ -328,6 +414,20 @@ mod tests {
     }
 
     #[test]
+    fn true_builtin_exits_zero_and_ignores_args() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "true", &[]), 0);
+        assert_eq!(status_of(&mut rt, "true", &["extra"]), 1);
+    }
+
+    #[test]
+    fn false_builtin_exits_one_and_ignores_args() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "false", &[]), 1);
+        assert_eq!(status_of(&mut rt, "false", &["extra"]), 1);
+    }
+
+    #[test]
     fn set_global_single_value() {
         let mut rt = Runtime::new();
         status_of(&mut rt, "set", &["x", "1"]);
@@ -338,7 +438,10 @@ mod tests {
     fn set_global_list_values() {
         let mut rt = Runtime::new();
         status_of(&mut rt, "set", &["x", "1", "2", "3"]);
-        assert_eq!(rt.env.get("x"), Some(vec!["1".into(), "2".into(), "3".into()]));
+        assert_eq!(
+            rt.env.get("x"),
+            Some(vec!["1".into(), "2".into(), "3".into()])
+        );
     }
 
     #[test]
@@ -431,7 +534,12 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(
             rt.env.get("PWD"),
-            Some(vec![std::fs::canonicalize(&tmp).unwrap().to_string_lossy().into_owned()])
+            Some(vec![
+                std::fs::canonicalize(&tmp)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            ])
         );
     }
 
@@ -536,8 +644,14 @@ mod tests {
     #[test]
     fn abbr_adds_lists_and_overwrites() {
         let mut rt = Runtime::new();
-        assert_eq!(status_of(&mut rt, "abbr", &["-a", "gs", "git", "status"]), 0);
-        assert_eq!(status_of(&mut rt, "abbr", &["-a", "gs", "git", "status", "--short"]), 0);
+        assert_eq!(
+            status_of(&mut rt, "abbr", &["-a", "gs", "git", "status"]),
+            0
+        );
+        assert_eq!(
+            status_of(&mut rt, "abbr", &["-a", "gs", "git", "status", "--short"]),
+            0
+        );
         assert_eq!(rt.abbrs.get("gs"), Some(&"git status --short".to_string()));
 
         match run(&mut rt, "abbr", &[]) {
