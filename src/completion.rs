@@ -52,9 +52,10 @@ impl DirSource for FsDirSource {
                 continue;
             };
             let name = entry.file_name().to_string_lossy().into_owned();
-            let is_exec = if cfg!(windows) {
-                !file_type.is_dir()
-            } else {
+            #[cfg(windows)]
+            let is_exec = !file_type.is_dir();
+            #[cfg(not(windows))]
+            let is_exec = {
                 use std::os::unix::fs::PermissionsExt;
                 entry
                     .metadata()

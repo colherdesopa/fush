@@ -136,3 +136,38 @@ Smoke matrix for the config.fush milestone:
 Notes:
 - All invocations went through `.cmd` batch files with env vars set inside the batch (`set FUSH_CONFIG=...`); nested quoting through `cmd.exe /c` from WSL remains unreliable.
 - Native Linux verification: `cargo test` (158 unit + 72 integration) and `cargo clippy --all-targets -- -D warnings` green.
+
+## Completions milestone
+
+Environment:
+- Build host: WSL CachyOS (Linux x86_64), rustc 1.97.0, target x86_64-pc-windows-gnu, mingw-w64-gcc toolchain
+- Windows target: Microsoft Windows [Version 10.0.26300.9974]
+- Binary: `cargo build --release --target x86_64-pc-windows-gnu`, copied to `C:\Users\Francisco\fush-smoke\fush.exe`
+- Smoke driven from WSL via `.cmd` files in `C:\Users\Francisco\fush-smoke`
+
+TAB-key completion is interactive and cannot be driven from batch files; the
+completion engine's interactive behavior was verified with a pty probe on
+Linux (see the completion milestone reviews). On Windows the smoke covers the
+engine non-interactively: registration/parsing via `complete`, default
+behavior regression, and PATH executability.
+
+Smoke matrix for completions:
+| Command | Expected | Result | Notes |
+| --- | --- | --- | --- |
+| `fush.exe -c "complete -c mytool -a \"alpha beta\"; echo ok"` | `ok`, exit 0 | PASS | rule registration parses and executes on Windows |
+| `fush.exe -c "complete -c mytool -e; echo ok2"` | `ok2`, exit 0 | PASS | erasing rules works |
+| `fush.exe -c "echo hi"` | `hi`, exit 0 | PASS | default behavior unchanged |
+| `fush.exe -c "cmd /c echo pathok"` | `pathok`, exit 0 | PASS | PATH executables found by basename (case-insensitive matching is cfg(windows), engine probe is interactive-only) |
+| `fush.exe -c "cd C:\\Users\\Francisco\\fush-smoke; cmd /c cd"` | `C:\Users\Francisco\fush-smoke`, exit 0 | PASS | quoted Windows paths work for the cwd the completion engine would list |
+| `fush.exe -c "cd"` | cwd, exit 0 | FAIL | `$HOME` is not set in the smoke environment, so bare `cd` errors; environment limitation, not a completion regression |
+
+Limitations:
+- A direct engine probe (which candidates a TAB press would offer) is not
+  possible non-interactively; the pty-driven interactive verification stays on
+  Linux. PATH basename lookup with case-insensitive matching
+  (`cfg!(windows)`) is verified indirectly via external command execution.
+- Build fix during smoke: `src/completion.rs` used `cfg!(windows)` (runtime)
+  around a `std::os::unix` import, which fails to compile for the Windows
+  target; replaced with `#[cfg(windows)]` / `#[cfg(not(windows))]` so the
+  executable-bit check is Unix-only at compile time. Behavior on Linux is
+  unchanged (full suite green).
