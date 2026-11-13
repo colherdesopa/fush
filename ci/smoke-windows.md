@@ -158,7 +158,7 @@ Smoke matrix for completions:
 | `fush.exe -c "complete -c mytool -e; echo ok2"` | `ok2`, exit 0 | PASS | erasing rules works |
 | `fush.exe -c "echo hi"` | `hi`, exit 0 | PASS | default behavior unchanged |
 | `fush.exe -c "cmd /c echo pathok"` | `pathok`, exit 0 | PASS | PATH executables found by basename (case-insensitive matching is cfg(windows), engine probe is interactive-only) |
-| `fush.exe -c "cd C:\\Users\\Francisco\\fush-smoke; cmd /c cd"` | `C:\Users\Francisco\fush-smoke`, exit 0 | PASS | quoted Windows paths work for the cwd the completion engine would list |
+| `fush.exe -c "cd \"C:\\Users\\Francisco\\fush-smoke\"; cmd /c cd"` | `C:\Users\Francisco\fush-smoke`, exit 0 | PASS | quoted Windows paths work for the cwd the completion engine would list |
 | `fush.exe -c "cd"` | cwd, exit 0 | FAIL | `$HOME` is not set in the smoke environment, so bare `cd` errors; environment limitation, not a completion regression |
 
 Limitations:
