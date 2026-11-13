@@ -195,20 +195,14 @@ fn return_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     }
 }
 
-fn true_builtin(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
-    if !args.is_empty() {
-        return err("fush: true: too many arguments");
-    }
+fn true_builtin(_rt: &mut Runtime, _args: &[String]) -> BuiltinResult {
     BuiltinResult::Done {
         status: 0,
         out: None,
     }
 }
 
-fn false_builtin(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
-    if !args.is_empty() {
-        return err("fush: false: too many arguments");
-    }
+fn false_builtin(_rt: &mut Runtime, _args: &[String]) -> BuiltinResult {
     BuiltinResult::Done {
         status: 1,
         out: None,
@@ -417,7 +411,7 @@ mod tests {
     fn true_builtin_exits_zero_and_ignores_args() {
         let mut rt = Runtime::new();
         assert_eq!(status_of(&mut rt, "true", &[]), 0);
-        assert_eq!(status_of(&mut rt, "true", &["extra"]), 1);
+        assert_eq!(status_of(&mut rt, "true", &["extra"]), 0);
     }
 
     #[test]
