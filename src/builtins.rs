@@ -46,9 +46,6 @@ fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     let Some(name) = rest.first() else {
         return err(&format!("fush: set: missing variable name\n{SET_USAGE}"));
     };
-    if rest.len() > 1 && local {
-        // fish allows multiple values for -l; that is fine, nothing to do.
-    }
     let values = rest[1..].to_vec();
     if exported {
         rt.env.set_global(name, values);
@@ -113,7 +110,7 @@ fn exit(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     BuiltinResult::Exit(code)
 }
 
-fn test(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+fn test(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     let status = match eval_test(args) {
         Ok(b) => {
             if b {
@@ -124,7 +121,6 @@ fn test(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
         }
         Err(msg) => return err(&format!("fush: test: {msg}")),
     };
-    let _ = &rt.status;
     BuiltinResult::Done { status, out: None }
 }
 

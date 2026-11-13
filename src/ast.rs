@@ -51,6 +51,8 @@ pub struct Command {
     pub redirects: Vec<Redirect>,
 }
 
+/// A job with an optional chained continuation. `and`/`or` at statement
+/// start after `;` or a newline chain onto the previous statement's job.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Job {
     pub negated: bool,
@@ -97,6 +99,9 @@ pub enum ExprKind {
     Literal,
     Var,
     CmdSubst,
+    /// Command substitution inside double quotes: expands to exactly one
+    /// word with embedded newlines preserved (no word-splitting).
+    QuotedCmdSubst,
     Concat,
 }
 
@@ -124,5 +129,9 @@ impl Expr {
 
     pub fn cmd_subst(pos: SourcePos, stmts: Vec<Stmt>) -> Expr {
         Expr { pos, kind: ExprKind::CmdSubst, text: String::new(), parts: Vec::new(), stmts }
+    }
+
+    pub fn quoted_cmd_subst(pos: SourcePos, stmts: Vec<Stmt>) -> Expr {
+        Expr { pos, kind: ExprKind::QuotedCmdSubst, text: String::new(), parts: Vec::new(), stmts }
     }
 }

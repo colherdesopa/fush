@@ -13,7 +13,13 @@ fn main() {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--ast" => ast_mode = true,
-            "-c" => src = iter.next().cloned(),
+            "-c" => match iter.next().cloned() {
+                Some(s) => src = Some(s),
+                None => {
+                    eprintln!("fush: -c requires a command");
+                    std::process::exit(2);
+                }
+            },
             "-h" | "--help" => {
                 println!("usage: fush [--ast] [-c 'command'] [script]");
                 return;

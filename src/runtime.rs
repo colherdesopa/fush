@@ -1,4 +1,5 @@
 use crate::ast::{Expr, ExprKind, Stmt};
+use crate::ast::ExprKind::QuotedCmdSubst;
 use crate::exec;
 use std::collections::{HashMap, HashSet};
 
@@ -82,6 +83,9 @@ impl Runtime {
     ///   zero words.
     /// - CmdSubst: run the statements, capture stdout, trim trailing
     ///   newlines, split on newlines into words.
+    /// - QuotedCmdSubst: like CmdSubst but expands to exactly one word with
+    ///   embedded newlines preserved (fish: quoted command substitution is
+    ///   not word-split).
     /// - Concat: parts are joined into a single word; var parts contribute
     ///   their values joined with spaces (documented simplification of fish's
     ///   cartesian product for multi-value vars inside concatenation).
@@ -92,6 +96,13 @@ impl Runtime {
             ExprKind::CmdSubst => {
                 let out = self.capture_stmts(&e.stmts)?;
                 Ok(cmdsubst_words(&out))
+            }
+            QuotedCmdSubst => {
+                let mut out = self.capture_stmts(&e.stmts)?;
+                if out.last() == Some(&b'\n') {
+                    out.pop();
+                }
+                Ok(vec![String::from_utf8_lossy(&out).into_owned()])
             }
             ExprKind::Concat => {
                 let mut word = String::new();
@@ -106,6 +117,13 @@ impl Runtime {
                             let out = self.capture_stmts(&part.stmts)?;
                             let joined = cmdsubst_words(&out).join(" ");
                             word.push_str(&joined);
+                        }
+                        QuotedCmdSubst => {
+                            let mut out = self.capture_stmts(&part.stmts)?;
+                            if out.last() == Some(&b'\n') {
+                                out.pop();
+                            }
+                            word.push_str(&String::from_utf8_lossy(&out));
                         }
                         ExprKind::Concat => {
                             let words = self.expand(part)?;

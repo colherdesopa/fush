@@ -34,15 +34,12 @@ fn list_expansion_separate_words() {
 #[test]
 fn undefined_var_is_zero_words() {
     let (out, _, _) = fush("echo pre$missing post");
-    // $missing is a bare var arg: zero words, so "pre" and "post" stay
-    // separate arguments joined by echo's space
     assert_eq!(out, "pre post\n");
 }
 
 #[test]
 fn quoted_concat_is_one_word() {
     let (out, _, _) = fush("set x a b; echo \"v=$x!\"");
-    // concatenation joins values with spaces inside one word
     assert_eq!(out, "v=a b!\n");
 }
 
@@ -57,7 +54,6 @@ fn cmdsubst_capture_and_split() {
 
 #[test]
 fn cmdsubst_in_concat() {
-    // the parser splits x(echo mid)y into three sibling args, not one Concat
     let (out, _, _) = fush("echo x(echo mid)y");
     assert_eq!(out, "x mid y\n");
 }
@@ -222,4 +218,96 @@ fn cd_and_pwd() {
     let (out, _, code) = fush(&format!("cd {tmp}; echo $PWD"));
     assert_eq!(code, 0);
     assert!(out.trim().starts_with("/"));
+}
+
+fn tmpfile(name: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("fush-test-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    dir.join(name).to_str().expect("utf8").to_string()
+}
+
+#[test]
+fn external_redirect_out_writes_file() {
+    let f = tmpfile("out.txt");
+    let (out, _, code) = fush(&format!("sh -c 'echo hi' > {f}"));
+    assert_eq!(out, "");
+    assert_eq!(code, 0);
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "hi\n");
+}
+
+#[test]
+fn external_redirect_err_writes_file() {
+    let f = tmpfile("err.txt");
+    let (out, _, code) = fush(&format!("sh -c 'echo boom >&2' 2> {f}"));
+    assert_eq!(out, "");
+    assert_eq!(code, 0);
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "boom\n");
+}
+
+#[test]
+fn external_redirect_in_reads_file() {
+    let f = tmpfile("in.txt");
+    std::fs::write(&f, "line1\nline2\n").unwrap();
+    let (out, _, code) = fush(&format!("cat < {f}"));
+    assert_eq!(out, "line1\nline2\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn and_after_semicolon_runs_on_success() {
+    let (out, _, code) = fush("true; and echo yes");
+    assert_eq!(out, "yes\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn and_after_semicolon_skips_on_failure() {
+    let (out, _, code) = fush("false; and echo no");
+    assert_eq!(out, "");
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn or_after_semicolon_runs_on_failure() {
+    let (out, _, code) = fush("false; or echo backup");
+    assert_eq!(out, "backup\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn and_after_newline_chains() {
+    let (out, _, code) = fush("true\nand echo multi");
+    assert_eq!(out, "multi\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn chained_or_then_and_after_separators() {
+    let (out, _, code) = fush("false; or echo one; and echo two");
+    assert_eq!(out, "one\ntwo\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn quoted_cmdsubst_is_single_word_with_newlines() {
+    let (out, _, code) = fush(r#"echo "a(echo one; echo two)b""#);
+    assert_eq!(out, "aone\ntwob\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn unquoted_cmdsubst_still_word_splits() {
+    let (out, _, code) = fush("echo (echo one; echo two)");
+    assert_eq!(out, "one two\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn dash_c_without_argument_errors() {
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .arg("-c")
+        .output()
+        .expect("failed to run fush");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("-c requires a command"));
 }

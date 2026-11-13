@@ -32,15 +32,18 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
                 words.extend(rt.expand(item)?);
             }
             rt.env.push_scope();
-            for w in words {
-                rt.env.set_local(var, vec![w]);
-                run_stmts(rt, body)?;
-                if rt.exited.is_some() {
-                    break;
+            let result = (|| -> Result<(), String> {
+                for w in words {
+                    rt.env.set_local(var, vec![w]);
+                    run_stmts(rt, body)?;
+                    if rt.exited.is_some() {
+                        break;
+                    }
                 }
-            }
+                Ok(())
+            })();
             rt.env.pop_scope();
-            Ok(())
+            result
         }
         Stmt::While { cond, body } => loop {
             run_job(rt, cond)?;
@@ -158,10 +161,13 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
             for (k, v) in rt.env.child_overrides() {
                 command.env(k, v);
             }
-            apply_redirects(rt, &mut command, &cmd.redirects)?;
+            let redirected = apply_redirects(rt, &mut command, &cmd.redirects)?;
+
             if let Some(input) = &prev_out {
-                command.stdin(Stdio::piped());
-                if !is_last {
+                if !redirected.stdin {
+                    command.stdin(Stdio::piped());
+                }
+                if !is_last && !redirected.stdout {
                     command.stdout(Stdio::piped());
                 }
                 let mut child = command
@@ -173,18 +179,20 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
                 last_external_out = None;
                 let out = child.wait_with_output().map_err(|e| e.to_string())?;
                 status = out.status.code().unwrap_or(1);
-                if is_last {
+                if is_last && !redirected.stdout {
                     last_external_out = Some(out.stdout);
                 } else {
                     prev_out = Some(out.stdout);
                 }
             } else {
-                command.stdout(Stdio::piped());
+                if !redirected.stdout {
+                    command.stdout(Stdio::piped());
+                }
                 let out = command
                     .output()
                     .map_err(|e| format!("failed to run '{name}': {e}"))?;
                 status = out.status.code().unwrap_or(1);
-                if is_last {
+                if is_last && !redirected.stdout {
                     last_external_out = Some(out.stdout);
                 } else {
                     prev_out = Some(out.stdout);
@@ -237,11 +245,19 @@ fn emit_builtin_output(
     }
 }
 
+/// Which standard descriptors the caller already redirected explicitly.
+#[derive(Default)]
+struct Redirected {
+    stdin: bool,
+    stdout: bool,
+}
+
 fn apply_redirects(
     rt: &mut Runtime,
     command: &mut Child,
     redirects: &[Redirect],
-) -> Result<(), String> {
+) -> Result<Redirected, String> {
+    let mut redirected = Redirected::default();
     for r in redirects {
         let target = rt.expand_one(&r.target)?;
         match (r.mode, r.fd) {
@@ -249,11 +265,13 @@ fn apply_redirects(
                 let f = std::fs::File::open(&target)
                     .map_err(|e| format!("cannot open '{target}' for reading: {e}"))?;
                 command.stdin(Stdio::from(f));
+                redirected.stdin = true;
             }
             (RedirectMode::Out, 1) => {
                 let f = std::fs::File::create(&target)
                     .map_err(|e| format!("cannot open '{target}' for writing: {e}"))?;
                 command.stdout(Stdio::from(f));
+                redirected.stdout = true;
             }
             (RedirectMode::Out, 2) => {
                 let f = std::fs::File::create(&target)
@@ -268,7 +286,7 @@ fn apply_redirects(
             }
         }
     }
-    Ok(())
+    Ok(redirected)
 }
 
 /// Expand command args into a full argv (command name first).

@@ -57,6 +57,28 @@ impl Parser {
             match t.kind {
                 TokKind::Eof | TokKind::RParen => break,
                 TokKind::Word if stop.iter().any(|kw| self.bare_word(t, kw)) => break,
+                TokKind::Word
+                    if (self.bare_word(t, "and") || self.bare_word(t, "or"))
+                        && stmts
+                            .last()
+                            .is_some_and(|s| matches!(s, Stmt::Job(_))) =>
+                {
+                    let op = if self.bare_word(t, "and") {
+                        ChainOp::And
+                    } else {
+                        ChainOp::Or
+                    };
+                    self.next();
+                    let job = self.parse_job()?;
+                    let Stmt::Job(prev) = stmts.last_mut().expect("checked above") else {
+                        unreachable!()
+                    };
+                    let mut tail: &mut Job = prev;
+                    while tail.chain.is_some() {
+                        tail = tail.chain.as_mut().expect("checked is_some").1.as_mut();
+                    }
+                    tail.chain = Some((op, Box::new(job)));
+                }
                 _ => stmts.push(self.parse_stmt()?),
             }
         }
@@ -298,7 +320,7 @@ impl Parser {
                 }
                 let mut parts = Vec::new();
                 for p in &t.parts {
-                    self.push_part(t.pos, p, &mut parts);
+                    self.push_part(t.pos, p, &mut parts)?;
                 }
                 Ok(Expr::concat(t.pos, parts))
             }
@@ -306,12 +328,27 @@ impl Parser {
         }
     }
 
-    fn push_part(&self, pos: SourcePos, p: &QuotedPart, parts: &mut Vec<Expr>) {
+    fn push_part(&mut self, pos: SourcePos, p: &QuotedPart, parts: &mut Vec<Expr>) -> Result<(), ParseError> {
         if p.is_var {
             parts.push(Expr::var(pos, p.text.clone()));
+        } else if p.is_subst {
+            let sub_toks = crate::lexer::lex(&p.text)?;
+            let mut sub = Parser { toks: sub_toks, i: 0 };
+            let stmts = sub.parse_stmts(&[])?;
+            if stmts.is_empty() {
+                return Err(ParseError {
+                    message: "empty command substitution, expected a command inside '()'".into(),
+                    pos,
+                });
+            }
+            if sub.peek().kind != TokKind::Eof {
+                return Err(sub.unexpected("end of command substitution"));
+            }
+            parts.push(Expr::quoted_cmd_subst(pos, stmts));
         } else {
             parts.push(Expr::literal(pos, p.text.clone()));
         }
+        Ok(())
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
@@ -587,8 +624,6 @@ mod tests {
         let Stmt::If { then_body, .. } = p.stmts.remove(0) else { panic!() };
         let Stmt::Job(sub) = &then_body[0] else { panic!() };
         assert_eq!(lit(&sub.pipeline[0].args[0]), "echo");
-        // the lexer unescapes e\nd to text "end", but it is not a bare
-        // word, so it must not have terminated the if-block
         assert_eq!(lit(&sub.pipeline[0].args[1]), "end");
     }
 
@@ -612,7 +647,6 @@ mod tests {
     fn escaped_end_does_not_terminate_block() {
         let mut p = parse_ok("if true\ne\\nd\necho hi\nend");
         let Stmt::If { then_body, .. } = p.stmts.remove(0) else { panic!() };
-        // the e\nd line is a job inside the if-block, not a terminator
         assert_eq!(then_body.len(), 2);
         let Stmt::Job(sub) = &then_body[0] else { panic!() };
         assert_eq!(lit(&sub.pipeline[0].args[0]), "end");
@@ -623,8 +657,6 @@ mod tests {
 
     #[test]
     fn escaped_not_is_command_name() {
-        // the first `not` is a real negation; the escaped no\t is the
-        // command name, not another negation
         let j = first_job("not no\\t true");
         assert!(j.negated);
         assert_eq!(j.pipeline[0].args.len(), 2);
@@ -634,8 +666,6 @@ mod tests {
 
     #[test]
     fn escaped_if_word_is_condition_job() {
-        // tru\e must not be accepted as the if keyword itself; it is a
-        // plain condition job inside a well-formed if block
         let mut p = parse_ok("if tru\\e\necho hi\nend");
         let Stmt::If { cond, then_body, .. } = p.stmts.remove(0) else { panic!() };
         assert_eq!(lit(&cond.pipeline[0].args[0]), "true");
@@ -652,8 +682,6 @@ mod tests {
 
     #[test]
     fn quoted_token_error_message() {
-        // a quoted 'end' at case position is not a terminator; the error
-        // must render the quoted text, not an empty token
         let err = parse("switch x\n'end'").unwrap_err();
         assert!(err.message.contains("\"end\""), "message: {}", err.message);
     }
