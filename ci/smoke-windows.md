@@ -48,3 +48,31 @@ Human check still required on a real Windows terminal:
 - ANSI color output is intentionally suppressed in `-c` mode because stdout is a pipe, not a TTY; this is expected behavior
 
 This milestone verifies the release binary and the non-TTY regression behavior for the UX features, while the final visual fidelity of the live TTY scrollback and color rendering still requires a human check on an actual Windows terminal.
+
+## Functions + abbr milestone
+
+Environment:
+- Build host: WSL CachyOS (Linux x86_64), rustc 1.97.0, target x86_64-pc-windows-gnu, mingw-w64-gcc toolchain
+- Windows target: Microsoft Windows [Version 10.0.26300.9974]
+- Binary: `cargo build --release --target x86_64-pc-windows-gnu`, copied to `C:\Users\Francisco\fush-smoke\fush.exe`
+- Smoke driven from WSL via `.cmd` files in `C:\Users\Francisco\fush-smoke`
+- `-c` mode is intentionally non-TTY; abbreviation expansion must not fire there, and `abbr` still works as a builtin in a script session.
+
+Smoke matrix for the functions + abbr milestone:
+| Command | Expected | Result | Notes |
+| --- | --- | --- | --- |
+| `fush.exe -c "function g; echo hi from fush; end; g"` | `hi from fush` | PASS | function definition + call works in Windows release build |
+| `fush.exe -c "function t; return 5; end; t; echo $status"` | `5` | PASS | return code sets `$status` |
+| `fush.exe -c "function r; r; end; r"` | recursion error; exit 1 | PASS | returns promptly with no hang |
+| `fush.exe -c "function g; echo hi from fush; end; function t; return 5; end; functions"` | `g` and `t` lines | PASS | `functions` lists defined names |
+| `fush.exe -c "abbr gs 'git status'; abbr"` | `gs git status` | PASS | abbreviation list output |
+| `fush.exe -c "abbr gs 'git status'; gs"` | command-not-found for `gs` and exit 1 | PASS | no interactive expansion in `-c` mode |
+| `fush.exe -c "echo hi; exit 3"` | exit code 3 | PASS | explicit exit status propagates |
+| `fush.exe -c "set x a b; echo $x"` | `a b` | PASS | baseline variable regression |
+| `fush.exe -c "if test 1 -lt 2; echo yes; else; echo no; end"` | `yes` | PASS | baseline if/else regression |
+| `fush.exe -c "cmd /c exit 3; or echo fallback"` | `fallback` | PASS | baseline `or` fallback regression |
+
+Verification notes:
+- The Windows release build was also checked with the Linux host test suite (`cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo build --release --target x86_64-pc-windows-gnu`).
+- The recursive function case was run under a shell timeout to confirm it exits promptly instead of hanging.
+- `abbr` expansion is intentionally disabled in `-c` / non-interactive mode, matching fish-style interactive semantics.

@@ -7,7 +7,7 @@ No Cygwin. No MSYS2. No WSL. No fork. Just fish's friendly syntax and UX
 
 ## Status
 
-Milestone 1 complete: autosuggestions + syntax highlighting are in place and smoke-verified on the Windows release build. See [docs/DESIGN.md](docs/DESIGN.md)
+Milestone 2 complete: functions + abbreviations are in place and smoke-verified on the Windows release build. See [docs/DESIGN.md](docs/DESIGN.md)
 for the goal and the road.
 
 ## Why
