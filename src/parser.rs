@@ -40,7 +40,11 @@ impl Parser {
             }
             _ => format!("'{}'", t.text),
         };
-        ParseError { message: format!("unexpected {what}, expected {expected}"), pos: t.pos }
+        ParseError {
+            message: format!("unexpected {what}, expected {expected}"),
+            pos: t.pos,
+            incomplete: t.kind == TokKind::Eof,
+        }
     }
 
     fn skip_terminators(&mut self) {
@@ -172,7 +176,9 @@ impl Parser {
     fn parse_for(&mut self) -> Result<Stmt, ParseError> {
         let t = self.next();
         if t.kind != TokKind::Word || t.parts.len() != 1 || t.parts[0].quote.is_some() || t.parts[0].is_var {
-            return Err(ParseError { message: "expected variable name".into(), pos: t.pos });
+            return Err(ParseError { message: "expected variable name".into(), pos: t.pos,
+                            incomplete: false,
+                        });
         }
         let var = t.text;
         self.expect_keyword("in")?;
@@ -268,7 +274,8 @@ impl Parser {
                             let n: u32 = t.text.parse().map_err(|_| ParseError {
                                 message: format!("bad file descriptor '{}'", t.text),
                                 pos: t.pos,
-                            })?;
+                            incomplete: false,
+                        })?;
                             let mode = match self.peek().kind {
                                 TokKind::Lt => RedirectMode::In,
                                 TokKind::Gt => RedirectMode::Out,
@@ -302,14 +309,16 @@ impl Parser {
                     return Err(ParseError {
                         message: "empty command substitution, expected a command inside '()'".into(),
                         pos: t.pos,
-                    });
+                            incomplete: false,
+                        });
                 }
                 let close = self.peek().clone();
                 if close.kind != TokKind::RParen {
                     return Err(ParseError {
                         message: "unterminated command substitution, expected ')'".into(),
                         pos: t.pos,
-                    });
+                            incomplete: false,
+                        });
                 }
                 self.next();
                 Ok(Expr::cmd_subst(t.pos, stmts))
@@ -339,7 +348,8 @@ impl Parser {
                 return Err(ParseError {
                     message: "empty command substitution, expected a command inside '()'".into(),
                     pos,
-                });
+                            incomplete: false,
+                        });
             }
             if sub.peek().kind != TokKind::Eof {
                 return Err(sub.unexpected("end of command substitution"));
@@ -369,6 +379,19 @@ mod tests {
 
     fn parse_ok(src: &str) -> Program {
         parse(src).unwrap_or_else(|e| panic!("parse failed: {e}"))
+    }
+
+    #[test]
+    fn eof_inside_block_marks_error_incomplete() {
+        let err = parse("if true").expect_err("must fail");
+        assert!(err.incomplete);
+        assert!(err.message.contains("end of input"));
+    }
+
+    #[test]
+    fn terminal_parse_error_is_not_incomplete() {
+        let err = parse("echo ) bad").expect_err("must fail");
+        assert!(!err.incomplete);
     }
 
     fn first_job(src: &str) -> Job {

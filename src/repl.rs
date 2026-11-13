@@ -40,7 +40,7 @@ pub fn run_repl() -> i32 {
                         }
                     }
                     Err(err) => {
-                        if err.to_string().contains("end of input") {
+                        if err.incomplete {
                             continue;
                         }
                         eprintln!("{err}");
@@ -54,6 +54,12 @@ pub fn run_repl() -> i32 {
             }
             Err(ReadlineError::Eof) => {
                 save_history_if_possible(&mut editor);
+                if let Err(err) = parser::parse(&buffer)
+                    && err.incomplete
+                {
+                    eprintln!("{err}");
+                    return 1;
+                }
                 return 0;
             }
             Err(_) => {
@@ -86,7 +92,7 @@ fn run_non_tty_repl() -> i32 {
                         }
                     }
                     Err(err) => {
-                        if err.to_string().contains("end of input") {
+                        if err.incomplete {
                             continue;
                         }
                         eprintln!("{err}");
@@ -94,7 +100,15 @@ fn run_non_tty_repl() -> i32 {
                     }
                 }
             }
-            None => return 0,
+            None => {
+                if let Err(err) = parser::parse(&buffer)
+                    && err.incomplete
+                {
+                    eprintln!("{err}");
+                    return 1;
+                }
+                return 0;
+            }
         }
     }
 }

@@ -355,3 +355,59 @@ fn dash_c_without_argument_errors() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("-c requires a command"));
 }
+
+#[test]
+fn repl_incomplete_block_at_eof_reports_error() {
+    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    {
+    use std::io::Write;
+    let mut sin = out.stdin.take().expect("stdin");
+    sin.write_all(b"if true\nexit\n").expect("write");
+    }
+    let done = out.wait_with_output().expect("wait");
+    assert_eq!(done.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&done.stderr).contains("expected 'end'"));
+    assert_eq!(String::from_utf8_lossy(&done.stdout), "");
+}
+
+#[test]
+fn repl_incomplete_block_completed_by_more_input() {
+    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    {
+    use std::io::Write;
+    let mut sin = out.stdin.take().expect("stdin");
+    sin.write_all(b"if true\necho deep\nend\necho done\nexit\n").expect("write");
+    }
+    let done = out.wait_with_output().expect("wait");
+    assert_eq!(done.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&done.stdout), "deep\ndone\n");
+}
+
+#[test]
+fn repl_parse_error_then_continue() {
+    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    {
+    use std::io::Write;
+    let mut sin = out.stdin.take().expect("stdin");
+    sin.write_all(b"echo ) bad\necho ok\nexit\n").expect("write");
+    }
+    let done = out.wait_with_output().expect("wait");
+    assert_eq!(done.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&done.stderr).contains("fush:"));
+    assert_eq!(String::from_utf8_lossy(&done.stdout), "ok\n");
+}

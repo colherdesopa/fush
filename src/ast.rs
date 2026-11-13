@@ -16,6 +16,7 @@ impl fmt::Display for SourcePos {
 pub struct ParseError {
     pub message: String,
     pub pos: SourcePos,
+    pub incomplete: bool,
 }
 
 impl fmt::Display for ParseError {

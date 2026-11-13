@@ -137,6 +137,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                         return Err(ParseError {
                             message: format!("unterminated {} quote", if quote == QuoteKind::Double { "double" } else { "single" }),
                             pos,
+                            incomplete: false,
                         });
                     }
                     let ch = chars[i];
@@ -197,7 +198,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                             return Err(ParseError {
                                 message: "unterminated command substitution inside double quotes, expected ')'".into(),
                                 pos,
-                            });
+                            incomplete: false,
+                        });
                         }
                         parts.push(QuotedPart {
                             quote: Some(quote),
@@ -240,7 +242,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                                 return Err(ParseError {
                                     message: format!("unterminated {} quote", if quote == QuoteKind::Double { "double" } else { "single" }),
                                     pos: qpos,
-                                });
+                            incomplete: false,
+                        });
                             }
                             let qch = chars[i];
                             if qch == (if quote == QuoteKind::Double { '"' } else { '\'' }) {
@@ -300,7 +303,8 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                                     return Err(ParseError {
                                         message: "unterminated command substitution inside double quotes, expected ')'".into(),
                                         pos: qpos,
-                                    });
+                            incomplete: false,
+                        });
                                 }
                                 qparts.push(QuotedPart {
                                     quote: Some(quote),
