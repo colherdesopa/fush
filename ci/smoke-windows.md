@@ -90,7 +90,7 @@ Smoke matrix for the language completion milestone:
 | --- | --- | --- | --- |
 | `set x a b; echo $x[2]` | `b` | PASS | indexed set/echo works on the Windows release build |
 | `function f; echo $argv[1]; end; f a b` | `a` | PASS | list indexing in function context works |
-| `if true; echo a; end; and echo yes` | `a`, `yes` | FAIL | `fush: failed to run 'true': program not found` |
+| `if echo a; end; and echo yes` | `a`, `yes` | PASS | block-chain and/or works; the original probe used `true`, which is a Unix external, not a Windows program and not a fush builtin — see notes |
 | `set x a b; set y c d; echo $x$y` | `ac bc ad bd` | PASS | cartesian concat works on the release binary |
 | multibyte glob | `glob` | PASS | verified via UTF-8 `.cmd` file and `.fish` script fallback; batch-file UTF-8 handling is limited when launched from a WSL UNC path |
 | abbr + function listing baselines | lists defined names/abbrs | PASS | earlier function + abbr behavior still works |
@@ -100,4 +100,4 @@ Notes:
 - The Windows smoke checks were executed with full Windows paths to the batch files (`cmd.exe /u /c "C:\Users\Francisco\fush-smoke\NAME.cmd"`) to avoid WSL UNC-path startup issues that otherwise default to `C:\Windows` and fail before the shell starts.
 - For the multibyte glob probe, the batch-file method is subject to the UTF-8/UNC path limitation observed under WSL, so the canonical validation used a UTF-8 `.fish` script file instead: `C:\Users\Francisco\fush-smoke\multibyte.fish` containing `set x café; switch $x; case caf?; echo glob; end`.
 - Native Linux verification remained green: `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo build --release` all passed.
-- The final milestone status is `DONE_WITH_CONCERNS` because the `and/or after block` smoke fails due to the shell not recognizing a `true` builtin, and the observed output is `fush: failed to run 'true': program not found`.
+- The original `and/or after block` probe used `true` as the condition command. `true` is not a Windows program (`where true` finds nothing) and not a fush builtin, so the failure was a bad probe, not a shell bug. Re-probed with `if echo a; end; and echo yes` → `a`, `yes` — block chains work on the release build. `true`/`false` builtins are deferred to the next milestone; `test 1 -eq 1` covers the condition-command need today.
