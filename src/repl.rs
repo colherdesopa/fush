@@ -3,6 +3,7 @@ use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{Context, Editor, Helper};
 use std::borrow::Cow;
+use std::io::Write;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
@@ -170,7 +171,8 @@ pub fn run_repl() -> i32 {
 
     let mut rt = runtime::Runtime::new();
     load_universals(&mut rt);
-    crate::config::source_config(&mut rt);
+    first_run_prompt();
+    crate::config::source_primary_config(&mut rt);
     let mut buffer = String::new();
     loop {
         let prompt = if buffer.is_empty() {
@@ -234,10 +236,44 @@ pub fn run_repl() -> i32 {
     }
 }
 
+/// Ask once, on an interactive TTY only, whether to import an existing
+/// fish config into config.fush. Errors are reported and the shell
+/// continues without config.
+fn first_run_prompt() {
+    let fush = crate::config::primary_config_path();
+    let fish = crate::config::fish_config_file();
+    if !matches!(
+        crate::config::first_run_state(fush.as_deref(), fish.as_deref()),
+        crate::config::FirstRun::Import
+    ) {
+        return;
+    }
+    let (fush, fish) = (fush.unwrap(), fish.unwrap());
+    eprint!(
+        "Found a fish config at {}. Import it into config.fush? [Y/n] ",
+        fish.display()
+    );
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+    let answer = match read {
+        Ok(0) | Err(_) => String::from("y"),
+        Ok(_) => line.trim().to_lowercase(),
+    };
+    let result = if answer.is_empty() || answer == "y" {
+        crate::config::import_fish_config(&fish, &fush)
+    } else {
+        crate::config::create_empty_config(&fush)
+    };
+    if let Err(msg) = result {
+        eprintln!("{msg}");
+    }
+}
+
 fn run_non_tty_repl() -> i32 {
     let mut rt = runtime::Runtime::new();
     load_universals(&mut rt);
-    crate::config::source_config(&mut rt);
+    crate::config::source_primary_config(&mut rt);
     let mut buffer = String::new();
     loop {
         match read_stdin_line() {

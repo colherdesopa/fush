@@ -728,6 +728,57 @@ fn set_e_erases_universal_across_processes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn fush_with_fush_config(fush_cfg: Option<&str>, fish_cfg: Option<&str>, args: &[&str]) -> (String, String, i32) {
+    let dir = std::env::temp_dir().join(format!(
+        "fush-fushcfg-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_fush"));
+    cmd.args(args);
+    if let Some(cfg) = fush_cfg {
+        let p = dir.join("config.fush");
+        std::fs::write(&p, cfg).expect("write fush config");
+        cmd.env("FUSH_CONFIG", &p);
+    }
+    if let Some(cfg) = fish_cfg {
+        let p = dir.join("config.fish");
+        std::fs::write(&p, cfg).expect("write fish config");
+        cmd.env("FUSH_FISH_CONFIG", &p);
+    }
+    let out = cmd.output().expect("run fush");
+    let _ = std::fs::remove_dir_all(&dir);
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn fush_config_wins_over_fish_config_in_c_mode() {
+    let (out, err, code) = fush_with_fush_config(
+        Some("set x 1"),
+        Some("set x 2"),
+        &["-c", "echo $x"],
+    );
+    assert_eq!(out, "1\n");
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn c_mode_without_fush_config_never_prompts() {
+    let (out, err, code) = fush_with_fush_config(None, Some("set x 2"), &["-c", "echo ok"]);
+    assert_eq!(out, "ok\n");
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+}
+
 #[test]
 fn set_ul_rejected_in_c_mode() {
     let dir = std::env::temp_dir().join(format!(

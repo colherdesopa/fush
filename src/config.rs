@@ -31,7 +31,6 @@ pub fn config_dir_for(
     Some(dir)
 }
 
-#[allow(dead_code)]
 pub fn config_path() -> Option<PathBuf> {
     let dir = config_dir()?;
     Some(dir.join("config.fish"))
@@ -71,10 +70,18 @@ pub fn primary_config_file() -> Option<PathBuf> {
     primary_config_path()
 }
 
+/// Fish config path with the FUSH_FISH_CONFIG override; defaults to
+/// config_path().
+pub fn fish_config_file() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("FUSH_FISH_CONFIG") {
+        return Some(PathBuf::from(p));
+    }
+    config_path()
+}
+
 /// Source the primary config (`config.fush`) into `rt`. Missing file is
 /// silent; parse or runtime errors print `fush: config: <msg>` and the
 /// shell continues, matching `source_config`.
-#[allow(dead_code)]
 pub fn source_primary_config(rt: &mut Runtime) {
     if let Some(path) = primary_config_file() {
         source_config_path(rt, &path);
@@ -124,9 +131,12 @@ pub fn source_config_path(rt: &mut Runtime, path: &std::path::Path) {
 /// Outcome of first-run detection. `Import` and `Decline` are the two
 /// recorded results of prompting the user; `Nothing` means no prompt is
 /// needed (primary config exists, or there is no fish config to offer).
-#[allow(dead_code)]
 pub enum FirstRun {
     Import,
+    /// Recorded by callers that distinguish an explicit decline; the
+    /// startup prompt treats any non-`y` answer as decline via
+    /// `create_empty_config` without naming the variant.
+    #[allow(dead_code)]
     Decline,
     Nothing,
 }
@@ -134,7 +144,6 @@ pub enum FirstRun {
 /// Whether first-run import is pending: only when the primary config is
 /// absent and a fish config exists. Every other combination is `Nothing`;
 /// `Import`/`Decline` are set by the caller after prompting.
-#[allow(dead_code)]
 pub fn first_run_state(fush: Option<&std::path::Path>, fish: Option<&std::path::Path>) -> FirstRun {
     match (fush, fish) {
         (Some(fush), Some(fish)) if !fush.exists() && fish.exists() => FirstRun::Import,
@@ -146,7 +155,6 @@ pub fn first_run_state(fush: Option<&std::path::Path>, fish: Option<&std::path::
 /// source, create missing parent dirs, write a tmp file, then rename over
 /// the target. Overwrites an existing target without corrupting it.
 /// Errors start `fush: config:`.
-#[allow(dead_code)]
 pub fn import_fish_config(fish: &std::path::Path, fush: &std::path::Path) -> Result<(), String> {
     let bytes = std::fs::read(fish).map_err(|e| format!("fush: config: cannot read fish config: {e}"))?;
     write_atomic(fush, &bytes)
@@ -154,7 +162,6 @@ pub fn import_fish_config(fish: &std::path::Path, fush: &std::path::Path) -> Res
 
 /// Create an empty primary config file (and any missing parent dirs).
 /// Errors start `fush: config:`.
-#[allow(dead_code)]
 pub fn create_empty_config(fush: &std::path::Path) -> Result<(), String> {
     write_atomic(fush, b"")
 }
@@ -396,6 +403,20 @@ join("config.fush");
             .exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fish_config_file_prefers_fush_fish_config_env() {
+        let dir = temp_dir("fishcfg-env");
+        let _ = std::fs::remove_dir_all(&dir);
+        let custom = dir.join("custom").join("config.fish");
+        // SAFETY: tests in this module run single-threaded.
+        unsafe { std::env::set_var("FUSH_FISH_CONFIG", &custom) };
+        assert_eq!(fish_config_file(), Some(custom.clone()));
+        // SAFETY: tests in this module run single-threaded.
+        unsafe { std::env::remove_var("FUSH_FISH_CONFIG") };
+        assert_eq!(fish_config_file(), config_path());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
