@@ -571,7 +571,7 @@ fn config_failing_command_shell_continues() {
         "set greeting ok\ncd /nonexistent/dir",
         &["-c", "echo $greeting"],
     );
-    assert!(err.contains("fush:") || err.is_empty());
+    assert!(err.contains("fush: cd:"));
     assert_eq!(out, "ok\n");
     assert_eq!(code, 0);
 }
