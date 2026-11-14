@@ -951,3 +951,64 @@ fn read_only_profile_cd_free() {
     assert_eq!(code, 0);
     assert_eq!(out.trim_end(), "0");
 }
+
+// --- profiles end-to-end (Task 3): REPL path, write outside, missing profile, fish syntax ---
+
+#[test]
+fn profile_write_outside_allowlist_blocked() {
+    let home = profile_home(
+        Some("dev"),
+        &format!("profile allow sh\nprofile allow-write /tmp/fush-allowed-{}-{ }", std::process::id(), 0),
+    );
+    let outside = std::env::temp_dir().join(format!("fush-outside-{}-{}.txt", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let (_, err, code) = fush_with_home(
+        &home,
+        &["--profile", "dev", "-c", &format!("echo hi > {}", outside.display())],
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&outside);
+    assert!(!outside.exists());
+    assert!(err.contains("not allowed in this profile: write to"), "err: {err}");
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn missing_profile_fails_startup_exit_2_noninteractive() {
+    let home = profile_home(None, "");
+    let (_, err, code) = fush_with_home(&home, &["--profile", "ghost", "-c", "echo hi"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(code, 2);
+    assert!(err.contains("cannot read"), "err: {err}");
+    assert!(!err.contains("hi"));
+}
+
+#[test]
+fn missing_profile_fails_startup_exit_2_repl() {
+    let home = profile_home(None, "");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(["--profile", "ghost"])
+        .env("HOME", &home)
+        .env_remove("USERPROFILE")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn fush");
+    child.stdin.take().unwrap().write_all(b"echo hi\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read"));
+}
+
+#[test]
+fn profile_file_supports_full_fish_syntax() {
+    let home = profile_home(Some("envy"), "set -x FOO bar\nprofile allow sh\n");
+    let (out, err, code) = fush_with_home(
+        &home,
+        &["--profile", "envy", "-c", "sh -c 'echo $FOO'"],
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(code, 0, "err: {err}");
+    assert_eq!(out, "bar\n");
+}

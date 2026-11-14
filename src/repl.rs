@@ -169,14 +169,14 @@ impl rustyline::highlight::Highlighter for FushHelper {
     }
 }
 
-pub fn run_repl() -> i32 {
+pub fn run_repl(profile: Option<Option<String>>) -> i32 {
     if !std::io::stdin().is_terminal() {
-        return run_non_tty_repl();
+        return run_non_tty_repl(profile);
     }
 
     let mut editor = match FushEditor::with_helper(FushHelper::new(Suggester::new())) {
         Ok(editor) => editor,
-        Err(_) => return run_non_tty_repl(),
+        Err(_) => return run_non_tty_repl(profile),
     };
     if let Some(path) = history_path() {
         let _ = editor.load_history(&path);
@@ -188,6 +188,13 @@ pub fn run_repl() -> i32 {
     }
 
     let mut rt = runtime::Runtime::new();
+    if let Err(e) = match &profile {
+        Some(name) => crate::profile::load_profile(&mut rt, name.as_deref()),
+        None => Ok(()),
+    } {
+        eprintln!("fush: profile: {e}");
+        std::process::exit(2);
+    }
     load_universals(&mut rt);
     first_run_prompt();
     crate::config::source_primary_config(&mut rt);
@@ -294,8 +301,15 @@ fn first_run_prompt() {
     }
 }
 
-fn run_non_tty_repl() -> i32 {
+fn run_non_tty_repl(profile: Option<Option<String>>) -> i32 {
     let mut rt = runtime::Runtime::new();
+    if let Err(e) = match &profile {
+        Some(name) => crate::profile::load_profile(&mut rt, name.as_deref()),
+        None => Ok(()),
+    } {
+        eprintln!("fush: profile: {e}");
+        std::process::exit(2);
+    }
     load_universals(&mut rt);
     crate::config::source_primary_config(&mut rt);
     let mut buffer = String::new();

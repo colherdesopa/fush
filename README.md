@@ -10,6 +10,8 @@ No Cygwin. No MSYS2. No WSL. No fork. Just fish's friendly syntax and UX
 TAB completion ships: commands (builtins, functions, PATH executables), files and directories, and per-command rules via the `complete` builtin. Language completion and config done: indexing, and/or after blocks, cartesian concat, char-wise glob, `true`/`false` builtins, and universal variables (`set -U`) with disk persistence — all smoke-checked on the Windows release build. Configuration is now `config.fush` (primary, at `%USERPROFILE%\.config\fush\config.fush`); an existing `config.fish` is offered for one-time import on the first interactive start. See [docs/DESIGN.md](docs/DESIGN.md)
 for the goal and the road.
 
+Profiles ship: `fush --profile NAME` loads `<config_dir>/profiles/NAME.fush` before the session starts, and bare `--profile` is read-only mode. A profile is just a sourced fush file that declares permissions with `profile allow CMD...` (external commands) and `profile allow-write PATH...` (file-write paths). Fail-closed: an allow-list left empty allows nothing. The gates sit on external spawn and file writes; builtins, functions and `cd` stay free. Missing profile file is a startup error.
+
 ## Why
 
 fish is the friendliest shell ever built, but on Windows it only exists inside

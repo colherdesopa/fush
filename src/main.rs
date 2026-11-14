@@ -67,21 +67,9 @@ fn parse_args(args: &[String]) -> Result<Args, (String, i32)> {
     Ok(parsed)
 }
 
-/// Load the requested profile, if any. No `--profile` flag means no
-/// profile at all (everything allowed); `Some(None)` is read-only mode.
-fn load_profile_if_requested(
-    rt: &mut runtime::Runtime,
-    profile: &Option<Option<String>>,
-) -> Result<(), String> {
-    match profile {
-        None => Ok(()),
-        Some(name) => profile::load_profile(rt, name.as_deref()),
-    }
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let parsed = match parse_args(&args[1..]) {
+    let mut parsed = match parse_args(&args[1..]) {
         Ok(p) => p,
         Err((msg, code)) => {
             if !msg.is_empty() {
@@ -96,12 +84,8 @@ fn main() {
         return;
     }
     if parsed.interactive || src.is_empty() {
-        let mut probe = runtime::Runtime::new();
-        if let Err(e) = load_profile_if_requested(&mut probe, &parsed.profile) {
-            eprintln!("fush: profile: {e}");
-            std::process::exit(2);
-        }
-        std::process::exit(repl::run_repl());
+        let profile = parsed.profile.take();
+        std::process::exit(repl::run_repl(profile));
     }
     let program = match parser::parse(&src) {
         Ok(p) => p,
@@ -111,7 +95,10 @@ fn main() {
         }
     };
     let mut rt = runtime::Runtime::new();
-    if let Err(e) = load_profile_if_requested(&mut rt, &parsed.profile) {
+    if let Err(e) = match &parsed.profile {
+        Some(name) => profile::load_profile(&mut rt, name.as_deref()),
+        None => Ok(()),
+    } {
         eprintln!("fush: profile: {e}");
         std::process::exit(2);
     }
