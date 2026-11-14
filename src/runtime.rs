@@ -109,7 +109,7 @@ fn path_components(path: &Path) -> Vec<String> {
         .collect()
 }
 
-fn strip_verbatim_prefix(s: &str) -> String {
+pub(crate) fn strip_verbatim_prefix(s: &str) -> String {
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else {
@@ -347,6 +347,7 @@ impl Runtime {
 
 pub(crate) fn cmdsubst_words(out: &[u8]) -> Vec<String> {
     let s = String::from_utf8_lossy(out);
+    let s = s.replace("\r\n", "\n");
     let trimmed = s.trim_end_matches('\n');
     if trimmed.is_empty() {
         Vec::new()

@@ -1,8 +1,67 @@
 use std::io::Write;
 use std::process::Command;
 
+// Portable helpers for cross-platform integration tests.
+
+/// Build an external-shell invocation for `script` as fush script text.
+/// Unix: sh -c '<script>'. Windows has no POSIX tools on PATH, so tests
+/// use cmd /C "<script>" instead.
+fn ext_shell(script: &str) -> String {
+    if cfg!(windows) {
+        format!("cmd /C \"{script}\"")
+    } else {
+        format!("sh -c \"{script}\"")
+    }
+}
+
+/// The name of the external shell command, for profile allow-lists.
+const EXT_SHELL_NAME: &str = if cfg!(windows) { "cmd" } else { "sh" };
+
+/// Convert a path to a form safe to embed in a fush script: forward
+/// slashes (Windows APIs accept them) avoid backslash-escape mangling.
+fn script_path(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// Strip a verbatim prefix so Windows canonicalized paths compare
+/// equal to their plain form (no-op on Unix).
+fn plain(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    if let Some(rest) = s.strip_prefix("//?/UNC/") {
+        return format!("//{rest}");
+    }
+    s.strip_prefix("//?/").unwrap_or(s).to_string()
+}
+
+/// Canonicalized temp dir: avoids 8.3 short paths (FRANCI~1) that
+/// Windows fush cd and profile allow-write matching cannot use.
+fn canon_temp() -> std::path::PathBuf {
+    std::path::PathBuf::from(plain(
+        &std::env::temp_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir()),
+    ))
+}
+/// Normalize external output for assertions: drop CR from CRLF.
+fn norm(s: &str) -> String {
+    s.replace('\r', "")
+}
+
+/// Resolve the fush binary at runtime when a harness sets
+/// CARGO_BIN_EXE_fush (cargo does by default); fall back to the
+/// compile-time path so plain `cargo test` keeps working.
+fn fush_exe() -> std::path::PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_fush")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_BIN_EXE_fush")))
+}
+
 fn fush(script: &str) -> (String, String, i32) {
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .arg("-c")
         .arg(script)
         .output()
@@ -85,26 +144,66 @@ fn local_scope_shadow() {
 
 #[test]
 fn exported_var_visible_to_children() {
-    let (out, _, _) = fush("set -x FUSH_TEST_VAR hello42; sh -c 'echo $FUSH_TEST_VAR'");
-    assert_eq!(out, "hello42\n");
+    let (out, _, _) = fush(if cfg!(windows) {
+        "set -x FUSH_TEST_VAR hello42; cmd /C set FUSH_TEST_VAR"
+    } else {
+        "set -x FUSH_TEST_VAR hello42; sh -c 'echo $FUSH_TEST_VAR'"
+    });
+    if cfg!(windows) {
+        assert!(norm(&out).contains("FUSH_TEST_VAR=hello42"), "out: {out}");
+    } else {
+        assert_eq!(out, "hello42\n");
+    }
 }
 
 #[test]
 fn pipeline_two_stage() {
-    let (out, _, _) = fush("echo hi | wc -c");
-    assert_eq!(out.trim(), "3");
+    let (out, _, _) = fush(if cfg!(windows) {
+        "echo hi | cmd /C more"
+    } else {
+        "echo hi | wc -c"
+    });
+    if cfg!(windows) {
+        assert_eq!(norm(&out).trim(), "hi");
+    } else {
+        assert_eq!(out.trim(), "3");
+    }
 }
 
 #[test]
 fn pipeline_three_stage() {
-    let (out, _, _) = fush("printf 'b\\na\\nc\\n' | sort | head -n1");
-    assert_eq!(out, "a\n");
+    if cfg!(windows) {
+        // Windows sort.exe needs CRLF input and cmd quoting breaks inside
+        // fush -c strings, so the sort stage runs from a temp batch file
+        // and fush captures its output.
+        let dir = canon_temp().join(format!("fush-3stage-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("in.txt"), b"b\r\na\r\nc\r\n").unwrap();
+        std::fs::write(dir.join("p3.bat"), b"@echo off\r\nsort \"%~dp0in.txt\"\r\n").unwrap();
+        let script = format!("cmd /C {}/p3.bat", script_path(&dir));
+        let (out, _, _) = fush(&script);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(norm(&out), "a\nb\nc\n");
+    } else {
+        let script = ext_shell("printf 'b\\na\\nc\\n' | sort | head -n1");
+        let (out, _, _) = fush(&script);
+        assert_eq!(norm(&out), "a\n");
+    }
 }
 
 #[test]
 fn builtin_piped_to_external() {
-    let (out, _, _) = fush("echo hello | tr a-z A-Z");
-    assert_eq!(out, "HELLO\n");
+    let script = if cfg!(windows) {
+        "echo hello | cmd /C more"
+    } else {
+        "echo hello | tr a-z A-Z"
+    };
+    let (out, _, _) = fush(script);
+    if cfg!(windows) {
+        assert_eq!(norm(&out).trim(), "hello");
+    } else {
+        assert_eq!(out, "HELLO\n");
+    }
 }
 
 #[test]
@@ -121,7 +220,12 @@ fn set_builtin_mid_pipeline_is_empty_stream() {
 
 #[test]
 fn pipeline_status_is_last_stage() {
-    let (out, _, _) = fush("echo hi | grep -q zzz; echo $status");
+    let script = if cfg!(windows) {
+        "echo hi | cmd /C findstr zzz; echo $status"
+    } else {
+        "echo hi | grep -q zzz; echo $status"
+    };
+    let (out, _, _) = fush(script);
     assert_eq!(out, "1\n");
 }
 
@@ -233,13 +337,30 @@ fn for_var_scoped() {
 
 #[test]
 fn while_loops() {
-    let (out, _, _) = fush("set n 0; while test $n -lt 3; set n (expr $n + 1); end; echo $n");
-    assert_eq!(out.split_whitespace().last(), Some("3"));
+    if cfg!(windows) {
+        let dir = canon_temp().join(format!("fush-while-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("incr.bat"),
+            b"@echo off\r\nset /a N=%1+1\r\necho %N%\r\n",
+        )
+        .unwrap();
+        let script = format!(
+            "set n 0; while test $n -lt 3; set n (cmd /C {}/incr.bat $n); end; echo $n",
+            script_path(&dir)
+        );
+        let (out, _, _) = fush(&script);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(norm(&out), "3\n");
+    } else {
+        let (out, _, _) = fush("set n 0; while test $n -lt 3; set n (expr $n + 1); end; echo $n");
+        assert_eq!(out.split_whitespace().last(), Some("3"));
+    }
 }
 
 #[test]
 fn repl_via_piped_stdin_echo_and_exit() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut child = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -258,7 +379,7 @@ fn repl_via_piped_stdin_echo_and_exit() {
 
 #[test]
 fn repl_multiline_block_via_piped_stdin() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut child = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -277,7 +398,7 @@ fn repl_multiline_block_via_piped_stdin() {
 
 #[test]
 fn repl_unknown_command_keeps_running_after_error() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut child = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -340,12 +461,20 @@ fn switch_multiword_value_errors_like_fish() {
 
 #[test]
 fn redirect_out_and_in() {
-    let tmp = std::env::temp_dir().join("fush-it-redir.txt");
+    let tmp = canon_temp().join("fush-it-redir.txt");
     let _ = std::fs::remove_file(&tmp);
-    let tmps = tmp.to_string_lossy().into_owned();
-    let (out, _, code) = fush(&format!("echo saved > {tmps}; cat < {tmps}"));
+    let tmps = script_path(&tmp);
+    let bs = tmps.replace('/', "\\").replace("\\", "\\\\");
+    let (out, _, code) = fush(&format!(
+        "echo saved > \"{tmps}\"; {}",
+        if cfg!(windows) {
+            format!("cmd /C findstr \".*\" \"{bs}\"")
+        } else {
+            format!("cat < \"{tmps}\"")
+        }
+    ));
     assert_eq!(code, 0);
-    assert_eq!(out, "saved\n");
+    assert_eq!(norm(&out), "saved\n");
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -370,42 +499,67 @@ fn unknown_command_errors() {
 
 #[test]
 fn cd_and_pwd() {
-    let tmp = std::env::temp_dir().to_string_lossy().into_owned();
-    let (out, _, code) = fush(&format!("cd {tmp}; echo $PWD"));
+    let tmp = canon_temp();
+    let (out, _, code) = fush(&format!("cd \"{}\"; echo $PWD", script_path(&tmp)));
     assert_eq!(code, 0);
-    assert!(out.trim().starts_with("/"));
+    let pwd = out.trim().to_string();
+    assert_eq!(pwd, plain(std::path::Path::new(&pwd)));
+    let long = tmp.canonicalize().unwrap_or_else(|_| tmp.clone());
+    let want = plain(&long);
+    assert!(pwd.eq_ignore_ascii_case(&want), "pwd {pwd:?} != {want:?}");
 }
 
-fn tmpfile(name: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("fush-test-{}-{name}", std::process::id()));
+fn tmpfile(name: &str) -> std::path::PathBuf {
+    let dir = canon_temp().join(format!("fush-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("mkdir");
-    dir.join(name).to_str().expect("utf8").to_string()
+    dir.join(name)
 }
 
 #[test]
 fn external_redirect_out_writes_file() {
     let f = tmpfile("out.txt");
-    let (out, _, code) = fush(&format!("sh -c 'echo hi' > {f}"));
+    let script = format!("{} > \"{}\"", ext_shell("echo hi"), script_path(&f));
+    let (out, _, code) = fush(&script);
     assert_eq!(out, "");
     assert_eq!(code, 0);
-    assert_eq!(std::fs::read_to_string(&f).unwrap(), "hi\n");
+    assert_eq!(norm(&std::fs::read_to_string(&f).unwrap()), "hi\n");
 }
 
 #[test]
 fn external_redirect_err_writes_file() {
     let f = tmpfile("err.txt");
-    let (out, _, code) = fush(&format!("sh -c 'echo boom >&2' 2> {f}"));
+    let script = if cfg!(windows) {
+        let dir = f.parent().unwrap().to_path_buf();
+        std::fs::write(dir.join("boom.bat"), b"@echo off\r\necho boom 1>&2\r\n").unwrap();
+        format!(
+            "cmd /C {}/boom.bat 2> \"{}\"",
+            script_path(&dir),
+            script_path(&f)
+        )
+    } else {
+        format!("sh -c 'echo boom >&2' 2> \"{}\"", script_path(&f))
+    };
+    let (out, _, code) = fush(&script);
     assert_eq!(out, "");
     assert_eq!(code, 0);
-    assert_eq!(std::fs::read_to_string(&f).unwrap(), "boom\n");
+    assert_eq!(
+        norm(&std::fs::read_to_string(&f).unwrap()).trim_end(),
+        "boom"
+    );
 }
 
 #[test]
 fn external_redirect_in_reads_file() {
     let f = tmpfile("in.txt");
     std::fs::write(&f, "line1\nline2\n").unwrap();
-    let (out, _, code) = fush(&format!("cat < {f}"));
-    assert_eq!(out, "line1\nline2\n");
+    let script = if cfg!(windows) {
+        let bs = script_path(&f).replace('/', "\\").replace("\\", "\\\\");
+        format!("cmd /C findstr \".*\" \"{bs}\"")
+    } else {
+        format!("cat < \"{}\"", script_path(&f))
+    };
+    let (out, _, code) = fush(&script);
+    assert_eq!(norm(&out), "line1\nline2\n");
     assert_eq!(code, 0);
 }
 
@@ -460,7 +614,7 @@ fn unquoted_cmdsubst_still_word_splits() {
 
 #[test]
 fn dash_c_without_argument_errors() {
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .arg("-c")
         .output()
         .expect("failed to run fush");
@@ -470,7 +624,7 @@ fn dash_c_without_argument_errors() {
 
 #[test]
 fn repl_incomplete_block_at_eof_reports_error() {
-    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut out = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -489,7 +643,7 @@ fn repl_incomplete_block_at_eof_reports_error() {
 
 #[test]
 fn repl_incomplete_block_completed_by_more_input() {
-    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut out = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -508,7 +662,7 @@ fn repl_incomplete_block_completed_by_more_input() {
 
 #[test]
 fn repl_parse_error_then_continue() {
-    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut out = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -538,7 +692,7 @@ fn fush_with_config(config: &str, args: &[&str]) -> (String, String, i32) {
     std::fs::create_dir_all(&dir).expect("mkdir");
     let cfg = dir.join("config.fish");
     std::fs::write(&cfg, config).expect("write config");
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(args)
         .env("FUSH_CONFIG", &cfg)
         .output()
@@ -568,7 +722,7 @@ fn config_function_callable_in_c_mode() {
 
 #[test]
 fn config_missing_is_silent() {
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(["-c", "echo ok"])
         .env("FUSH_CONFIG", "/nonexistent/fush/config.fish")
         .output()
@@ -602,7 +756,7 @@ fn config_abbr_reaches_tty_repl() {
     std::fs::create_dir_all(&dir).expect("mkdir");
     let cfg = dir.join("config.fish");
     std::fs::write(&cfg, "abbr gs git status").expect("write config");
-    let mut out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut out = Command::new(fush_exe())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -635,7 +789,7 @@ fn fush_with_universals(
     std::fs::create_dir_all(&dir).expect("mkdir");
     let uni = dir.join("universals");
     std::fs::write(&uni, universals).expect("write universals");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_fush"));
+    let mut cmd = Command::new(fush_exe());
     cmd.args(args).env("FUSH_UNIVERSALS", &uni);
     if let Some(cfg) = config {
         let cfg_path = dir.join("config.fish");
@@ -709,7 +863,7 @@ fn set_u_persists_across_processes() {
     ));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let uni = dir.join("universals");
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(["-c", "set -U greeting hello multi"])
         .env("FUSH_UNIVERSALS", &uni)
         .output()
@@ -719,7 +873,7 @@ fn set_u_persists_across_processes() {
         std::fs::read_to_string(&uni).unwrap(),
         "greeting\thello\tmulti\n"
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(["-c", "echo \"$greeting\""])
         .env("FUSH_UNIVERSALS", &uni)
         .output()
@@ -741,7 +895,7 @@ fn set_e_erases_universal_across_processes() {
     std::fs::create_dir_all(&dir).expect("mkdir");
     let uni = dir.join("universals");
     std::fs::write(&uni, "greeting\thello\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(["-c", "set -e greeting; echo \"gone=$greeting\""])
         .env("FUSH_UNIVERSALS", &uni)
         .output()
@@ -766,7 +920,7 @@ fn fush_with_fush_config(
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).expect("mkdir");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_fush"));
+    let mut cmd = Command::new(fush_exe());
     cmd.args(args);
     if let Some(cfg) = fush_cfg {
         let p = dir.join("config.fush");
@@ -816,7 +970,7 @@ fn set_ul_rejected_in_c_mode() {
     ));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let uni = dir.join("universals");
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(["-c", "set -Ul x 1"])
         .env("FUSH_UNIVERSALS", &uni)
         .output()
@@ -827,7 +981,7 @@ fn set_ul_rejected_in_c_mode() {
 }
 
 fn fush_with_home(home: &std::path::Path, args: &[&str]) -> (String, String, i32) {
-    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let out = Command::new(fush_exe())
         .args(args)
         .env("HOME", home)
         .env_remove("USERPROFILE")
@@ -888,17 +1042,18 @@ fn read_only_profile_builtins_free() {
 
 #[test]
 fn named_profile_allowlisted_external_runs() {
-    let home = profile_home(Some("dev"), "profile allow sh");
-    let (out, err, code) = fush_with_home(&home, &["--profile", "dev", "-c", "sh -c 'echo hi'"]);
+    let home = profile_home(Some("dev"), &format!("profile allow {EXT_SHELL_NAME}"));
+    let script = ext_shell("echo hi");
+    let (out, err, code) = fush_with_home(&home, &["--profile", "dev", "-c", &script]);
     let _ = std::fs::remove_dir_all(&home);
-    assert_eq!(out, "hi\n");
+    assert_eq!(norm(&out), "hi\n");
     assert_eq!(err, "");
     assert_eq!(code, 0);
 }
 
 #[test]
 fn named_profile_unlisted_external_blocked() {
-    let home = profile_home(Some("dev"), "profile allow sh");
+    let home = profile_home(Some("dev"), &format!("profile allow {EXT_SHELL_NAME}"));
     let (out, err, code) = fush_with_home(&home, &["--profile", "dev", "-c", "git status"]);
     let _ = std::fs::remove_dir_all(&home);
     assert_eq!(out, "");
@@ -909,7 +1064,7 @@ fn named_profile_unlisted_external_blocked() {
 #[test]
 fn read_only_profile_write_redirect_blocked() {
     let home = profile_home(None, "");
-    let work = std::env::temp_dir().join(format!(
+    let work = canon_temp().join(format!(
         "fush-wr-{}-{}",
         std::process::id(),
         std::process::id()
@@ -922,7 +1077,7 @@ fn read_only_profile_write_redirect_blocked() {
         &[
             "--profile",
             "-c",
-            &format!("echo hi > {}", target.display()),
+            &format!("echo hi > \"{}\"", script_path(&target)),
         ],
     );
     let _ = std::fs::remove_dir_all(&home);
@@ -934,8 +1089,17 @@ fn read_only_profile_write_redirect_blocked() {
 
 #[test]
 fn named_profile_write_redirect_allowed_in_allowlisted_dir() {
-    let home = profile_home(Some("dev"), "profile allow sh\nprofile allow-write /tmp");
-    let work = std::env::temp_dir().join(format!(
+    let allow = if cfg!(windows) {
+        let long = canon_temp();
+        format!(
+            "profile allow cmd\nprofile allow-write {}",
+            plain(&long).replace('\\', "/")
+        )
+    } else {
+        "profile allow sh\nprofile allow-write /tmp".to_string()
+    };
+    let home = profile_home(Some("dev"), &allow);
+    let work = canon_temp().join(format!(
         "fush-wa-{}-{}",
         std::process::id(),
         std::process::id()
@@ -949,7 +1113,7 @@ fn named_profile_write_redirect_allowed_in_allowlisted_dir() {
             "--profile",
             "dev",
             "-c",
-            &format!("echo hi > {}", target.display()),
+            &format!("echo hi > \"{}\"", script_path(&target)),
         ],
     );
     let contents = std::fs::read_to_string(&target).unwrap_or_default();
@@ -963,16 +1127,24 @@ fn named_profile_write_redirect_allowed_in_allowlisted_dir() {
 #[test]
 fn read_only_profile_cmdsubst_inner_blocked() {
     let home = profile_home(None, "");
-    let (out, err, _code) = fush_with_home(&home, &["--profile", "-c", "echo (sh -c 'echo hi')"]);
+    let script = if cfg!(windows) {
+        "echo (cmd /C echo hi)"
+    } else {
+        "echo (sh -c 'echo hi')"
+    };
+    let (out, err, _code) = fush_with_home(&home, &["--profile", "-c", script]);
     let _ = std::fs::remove_dir_all(&home);
-    assert!(err.contains("not allowed in this profile: sh"));
+    assert!(
+        err.contains(&format!("not allowed in this profile: {EXT_SHELL_NAME}")),
+        "err: {err}"
+    );
     assert!(!out.contains("hi"));
 }
 
 #[test]
 fn read_only_profile_builtin_echo_redirect_blocked() {
     let home = profile_home(None, "");
-    let work = std::env::temp_dir().join(format!(
+    let work = canon_temp().join(format!(
         "fush-wb-{}-{}",
         std::process::id(),
         std::process::id()
@@ -985,7 +1157,7 @@ fn read_only_profile_builtin_echo_redirect_blocked() {
         &[
             "--profile",
             "-c",
-            &format!("echo hi > {}", target.display()),
+            &format!("echo hi > \"{}\"", script_path(&target)),
         ],
     );
     let _ = std::fs::remove_dir_all(&home);
@@ -998,7 +1170,7 @@ fn read_only_profile_builtin_echo_redirect_blocked() {
 #[test]
 fn read_only_profile_cd_free() {
     let home = profile_home(None, "");
-    let work = std::env::temp_dir().join(format!(
+    let work = canon_temp().join(format!(
         "fush-cd-{}-{}",
         std::process::id(),
         std::process::id()
@@ -1010,7 +1182,7 @@ fn read_only_profile_cd_free() {
         &[
             "--profile",
             "-c",
-            &format!("cd {}; echo $status", work.display()),
+            &format!("cd \"{}\"; echo $status", script_path(&work)),
         ],
     );
     let _ = std::fs::remove_dir_all(&home);
@@ -1026,13 +1198,21 @@ fn read_only_profile_cd_free() {
 fn profile_write_outside_allowlist_blocked() {
     let home = profile_home(
         Some("dev"),
-        &format!(
-            "profile allow sh\nprofile allow-write /tmp/fush-allowed-{}-{ }",
-            std::process::id(),
-            0
-        ),
+        &if cfg!(windows) {
+            let long = canon_temp().join(format!("fush-allowed-{}", std::process::id()));
+            std::fs::create_dir_all(&long).unwrap();
+            format!(
+                "profile allow cmd\nprofile allow-write {}",
+                plain(&long).replace('\\', "/")
+            )
+        } else {
+            format!(
+                "profile allow sh\nprofile allow-write /tmp/fush-allowed-{}",
+                std::process::id()
+            )
+        },
     );
-    let outside = std::env::temp_dir().join(format!(
+    let outside = canon_temp().join(format!(
         "fush-outside-{}-{}.txt",
         std::process::id(),
         std::time::SystemTime::now()
@@ -1046,7 +1226,7 @@ fn profile_write_outside_allowlist_blocked() {
             "--profile",
             "dev",
             "-c",
-            &format!("echo hi > {}", outside.display()),
+            &format!("echo hi > \"{}\"", script_path(&outside)),
         ],
     );
     let _ = std::fs::remove_dir_all(&home);
@@ -1072,7 +1252,7 @@ fn missing_profile_fails_startup_exit_2_noninteractive() {
 #[test]
 fn missing_profile_fails_startup_exit_2_repl() {
     let home = profile_home(None, "");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_fush"))
+    let mut child = Command::new(fush_exe())
         .args(["--profile", "ghost"])
         .env("HOME", &home)
         .env_remove("USERPROFILE")
@@ -1090,9 +1270,17 @@ fn missing_profile_fails_startup_exit_2_repl() {
 
 #[test]
 fn profile_file_supports_full_fish_syntax() {
-    let home = profile_home(Some("envy"), "set -x FOO bar\nprofile allow sh\n");
-    let (out, err, code) = fush_with_home(&home, &["--profile", "envy", "-c", "sh -c 'echo $FOO'"]);
+    let script = if cfg!(windows) {
+        "cmd /C echo %FOO%"
+    } else {
+        "sh -c 'echo $FOO'"
+    };
+    let home = profile_home(
+        Some("envy"),
+        &format!("set -x FOO bar\nprofile allow {EXT_SHELL_NAME}\n"),
+    );
+    let (out, err, code) = fush_with_home(&home, &["--profile", "envy", "-c", script]);
     let _ = std::fs::remove_dir_all(&home);
     assert_eq!(code, 0, "err: {err}");
-    assert_eq!(out, "bar\n");
+    assert_eq!(norm(&out), "bar\n");
 }

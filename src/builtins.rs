@@ -335,8 +335,8 @@ fn cd(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
             if std::env::set_current_dir(&path).is_err() {
                 return err(&format!("fush: cd: cannot change to '{}'", path.display()));
             }
-            rt.env
-                .set_global("PWD", vec![path.to_string_lossy().into_owned()]);
+            let shown = crate::runtime::strip_verbatim_prefix(&path.to_string_lossy());
+            rt.env.set_global("PWD", vec![shown]);
             BuiltinResult::Done {
                 status: 0,
                 out: None,

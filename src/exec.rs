@@ -405,6 +405,11 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
     }
     rt.status = status;
     if let Some(bytes) = last_external_out.take() {
+        let bytes = if cfg!(windows) {
+            crlf_to_lf(bytes)
+        } else {
+            bytes
+        };
         if let Some(buf) = &mut rt.capture {
             buf.extend_from_slice(&bytes);
         } else {
@@ -414,6 +419,24 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
         }
     }
     Ok(status)
+}
+
+/// Converts CRLF line endings to LF. Windows console tools emit CRLF;
+/// normalizing keeps captured output (command substitution, pipelines)
+/// line-ending agnostic so scripts behave like on Unix.
+fn crlf_to_lf(bytes: Vec<u8>) -> Vec<u8> {
+    if !bytes.contains(&b'\r') {
+        return bytes;
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut iter = bytes.iter().copied().peekable();
+    while let Some(b) = iter.next() {
+        if b == b'\r' && iter.peek() == Some(&b'\n') {
+            continue;
+        }
+        out.push(b);
+    }
+    out
 }
 
 /// Write builtin stdout to its destination: an Out redirect on fd 1, the
