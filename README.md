@@ -12,6 +12,8 @@ for the goal and the road.
 
 Profiles ship: `fush --profile NAME` loads `<config_dir>/profiles/NAME.fush` before the session starts, and bare `--profile` is read-only mode. A profile is just a sourced fush file that declares permissions with `profile allow CMD...` (external commands) and `profile allow-write PATH...` (file-write paths). Fail-closed: an allow-list left empty allows nothing. The gates sit on external spawn and file writes; builtins, functions and `cd` stay free. Missing profile file is a startup error.
 
+The release channel is live: pushing a `v*` tag builds a signed-off GitHub release with `fush.exe` (zip), a per-user Inno Setup installer (`fush-setup-<version>.exe`, optional Windows Terminal profile/default and PATH task), and a `SHA256SUMS` file. CI runs fmt, clippy and the full test suite on Linux, and the suite plus a GNU release build on Windows, on every push.
+
 ## Why
 
 fish is the friendliest shell ever built, but on Windows it only exists inside

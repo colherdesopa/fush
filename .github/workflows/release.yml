@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - run: cargo build --release --target x86_64-pc-windows-gnu
+      - run: mkdir dist && copy target\x86_64-pc-windows-gnu\release\fush.exe dist\fush.exe
+        shell: cmd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fush-exe
+          path: dist/fush.exe
+
+  installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: fush-exe
+          path: dist
+      - run: choco install -y innosetup --version=6.7.1
+      - run: |
+          $version = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "installer\fush.iss"
+        shell: powershell
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fush-setup
+          path: installer/fush-setup-*.exe
+
+  release:
+    needs: [build, installer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fush-exe
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: fush-setup
+          path: installer
+      - run: |
+          cd dist && zip ../fush-${{ github.ref_name }}-win64.zip fush.exe && cd ..
+          sha256sum fush-${{ github.ref_name }}-win64.zip installer/fush-setup-*.exe > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            fush-${{ github.ref_name }}-win64.zip
+            installer/fush-setup-*.exe
+            SHA256SUMS
