@@ -792,12 +792,9 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(
             rt.env.get("PWD"),
-            Some(vec![
-                std::fs::canonicalize(&tmp)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned()
-            ])
+            Some(vec![crate::runtime::strip_verbatim_prefix(
+                &std::fs::canonicalize(&tmp).unwrap().to_string_lossy()
+            )])
         );
     }
 
