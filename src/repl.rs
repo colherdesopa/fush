@@ -3,12 +3,12 @@ use crate::{exec, highlight, parser, runtime, suggest::Suggester};
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{Context, Editor, Helper};
-use std::cell::RefCell;
 use std::borrow::Cow;
-use std::rc::Rc;
+use std::cell::RefCell;
 use std::io::Write;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 type FushEditor = Editor<FushHelper, DefaultHistory>;
 

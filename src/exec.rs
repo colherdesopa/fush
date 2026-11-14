@@ -1,5 +1,5 @@
 use crate::ast::{ChainOp, Job, Redirect, RedirectMode, Stmt};
-use crate::builtins::{run, BuiltinResult};
+use crate::builtins::{BuiltinResult, run};
 use crate::runtime::Runtime;
 use std::io::Write;
 use std::process::{Command as Child, Stdio};
@@ -43,7 +43,12 @@ fn run_chain<T>(
 pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
     match stmt {
         Stmt::Job(job) => run_job(rt, job),
-        Stmt::If { cond, then_body, else_body, chain } => {
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+            chain,
+        } => {
             run_job(rt, cond)?;
             let branch = if rt.status == 0 { then_body } else { else_body };
             if branch.is_empty() {
@@ -53,7 +58,12 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
             }
             run_chain(rt, rt.status, chain, run_stmt)
         }
-        Stmt::For { var, items, body, chain } => {
+        Stmt::For {
+            var,
+            items,
+            body,
+            chain,
+        } => {
             let mut words = Vec::new();
             for item in items {
                 words.extend(rt.expand(item)?);
@@ -93,8 +103,12 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
                 }
             }
             run_chain(rt, rt.status, chain, run_stmt)
-        },
-        Stmt::Switch { value, cases, chain } => {
+        }
+        Stmt::Switch {
+            value,
+            cases,
+            chain,
+        } => {
             let v = rt.expand_one(value)?;
             let mut matched = false;
             for case in cases {
@@ -115,7 +129,12 @@ pub fn run_stmt(rt: &mut Runtime, stmt: &Stmt) -> Result<(), String> {
             }
             run_chain(rt, rt.status, chain, run_stmt)
         }
-        Stmt::Function { name, params, body, chain } => {
+        Stmt::Function {
+            name,
+            params,
+            body,
+            chain,
+        } => {
             rt.register_function(name, params.clone(), body.clone());
             set_status(rt, 0);
             run_chain(rt, rt.status, chain, run_stmt)
@@ -129,7 +148,11 @@ pub fn run_stmts(rt: &mut Runtime, stmts: &[Stmt]) -> Result<(), String> {
         if rt.exited.is_some() {
             break;
         }
-        if rt.function_return_stack.last().is_some_and(|slot| slot.is_some()) {
+        if rt
+            .function_return_stack
+            .last()
+            .is_some_and(|slot| slot.is_some())
+        {
             break;
         }
     }
@@ -144,11 +167,7 @@ pub fn run_job(rt: &mut Runtime, job: &Job) -> Result<(), String> {
 }
 
 fn negate(status: i32) -> i32 {
-    if status == 0 {
-        1
-    } else {
-        0
-    }
+    if status == 0 { 1 } else { 0 }
 }
 
 /// Run a pipeline. External stages spawn sequentially with `output()`
@@ -209,7 +228,10 @@ mod tests {
     }
 
     fn command(args: Vec<Expr>) -> Command {
-        Command { args, redirects: Vec::new() }
+        Command {
+            args,
+            redirects: Vec::new(),
+        }
     }
 
     #[test]
@@ -221,14 +243,22 @@ mod tests {
             pipeline: vec![command(vec![lit("echo"), var("argv")])],
             chain: None,
         })];
-        let mut stmts = vec![Stmt::Function { name: "greet".to_string(), params: vec![], body: body.clone(), chain: None }];
+        let mut stmts = vec![Stmt::Function {
+            name: "greet".to_string(),
+            params: vec![],
+            body: body.clone(),
+            chain: None,
+        }];
         stmts.push(Stmt::Job(Job {
             negated: false,
             pipeline: vec![command(vec![lit("greet"), lit("hello"), lit("there")])],
             chain: None,
         }));
         assert_eq!(run_program(&mut rt, &stmts), 0);
-        assert_eq!(String::from_utf8(rt.capture.take().unwrap()).unwrap(), "hello there\n");
+        assert_eq!(
+            String::from_utf8(rt.capture.take().unwrap()).unwrap(),
+            "hello there\n"
+        );
     }
 
     #[test]
@@ -246,7 +276,12 @@ mod tests {
                 chain: None,
             }),
         ];
-        let stmt = Stmt::Function { name: "done".to_string(), params: vec![], body, chain: None };
+        let stmt = Stmt::Function {
+            name: "done".to_string(),
+            params: vec![],
+            body,
+            chain: None,
+        };
         let call = Stmt::Job(Job {
             negated: false,
             pipeline: vec![command(vec![lit("done")])],
@@ -264,7 +299,12 @@ mod tests {
             pipeline: vec![command(vec![lit("loop")])],
             chain: None,
         })];
-        let fn_stmt = Stmt::Function { name: "loop".to_string(), params: vec![], body, chain: None };
+        let fn_stmt = Stmt::Function {
+            name: "loop".to_string(),
+            params: vec![],
+            body,
+            chain: None,
+        };
         let call = Stmt::Job(Job {
             negated: false,
             pipeline: vec![command(vec![lit("loop")])],
@@ -422,24 +462,22 @@ fn check_write_allowed(rt: &Runtime, target: &str) -> Result<(), String> {
             std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
         } else {
             match path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                Some(parent) if parent.exists() => {
-                    match std::fs::canonicalize(parent) {
-                        Ok(canon) => canon.join(path.file_name().unwrap_or_default()),
-                        Err(_) => path.to_path_buf(),
-                    }
-                }
+                Some(parent) if parent.exists() => match std::fs::canonicalize(parent) {
+                    Ok(canon) => canon.join(path.file_name().unwrap_or_default()),
+                    Err(_) => path.to_path_buf(),
+                },
                 _ => std::env::current_dir().unwrap_or_default().join(path),
             }
         }
     } else {
-        std::env::current_dir()
-            .unwrap_or_default()
-            .join(path)
+        std::env::current_dir().unwrap_or_default().join(path)
     };
     if rt.profile_allows_write(&abs) {
         Ok(())
     } else {
-        Err(format!("fush: not allowed in this profile: write to {target}"))
+        Err(format!(
+            "fush: not allowed in this profile: write to {target}"
+        ))
     }
 }
 

@@ -53,7 +53,10 @@ fn read_var_name_and_index(
 ) -> Result<(String, Option<String>), ParseError> {
     let start = *i;
     while *i < chars.len() && (chars[*i].is_alphanumeric() || chars[*i] == '_') {
-        if matches!(chars[*i], '\n' | '\r' | ' ' | '\t' | '|' | ';' | '(' | ')' | '<' | '>' | '[' | ']' | '$') {
+        if matches!(
+            chars[*i],
+            '\n' | '\r' | ' ' | '\t' | '|' | ';' | '(' | ')' | '<' | '>' | '[' | ']' | '$'
+        ) {
             break;
         }
         *col += 1;
@@ -62,7 +65,10 @@ fn read_var_name_and_index(
 
     let name: String = chars[start..*i].iter().collect();
     if *i < chars.len() && chars[*i] == '[' {
-        let pos = SourcePos { line: *line, col: *col };
+        let pos = SourcePos {
+            line: *line,
+            col: *col,
+        };
         *col += 1;
         *i += 1;
         let inner_start = *i;
@@ -140,7 +146,14 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
         match c {
             ' ' | '\t' | '\r' => bump!(),
             '\n' => {
-                toks.push(Token { kind: TokKind::Newline, text: "\n".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::Newline,
+                    text: "\n".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             '#' => {
@@ -149,27 +162,69 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                 }
             }
             '|' => {
-                toks.push(Token { kind: TokKind::Pipe, text: "|".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::Pipe,
+                    text: "|".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             ';' => {
-                toks.push(Token { kind: TokKind::Semi, text: ";".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::Semi,
+                    text: ";".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             '(' => {
-                toks.push(Token { kind: TokKind::LParen, text: "(".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::LParen,
+                    text: "(".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             ')' => {
-                toks.push(Token { kind: TokKind::RParen, text: ")".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::RParen,
+                    text: ")".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             '<' => {
-                toks.push(Token { kind: TokKind::Lt, text: "<".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::Lt,
+                    text: "<".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             '>' => {
-                toks.push(Token { kind: TokKind::Gt, text: ">".into(), parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::Gt,
+                    text: ">".into(),
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
                 bump!();
             }
             '0'..='9' if is_fd_redirect(&chars, i) => {
@@ -178,18 +233,39 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     bump!();
                 }
                 let text: String = chars[start..i].iter().collect();
-                toks.push(Token { kind: TokKind::FdNum, text, parts: Vec::new(), pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::FdNum,
+                    text,
+                    parts: Vec::new(),
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
             }
             '$' => {
                 bump!();
                 if i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                    let (name, index) = read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
-                    toks.push(Token { kind: TokKind::Dollar, text: name, parts: Vec::new(), pos, index, escaped: false });
+                    let (name, index) =
+                        read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
+                    toks.push(Token {
+                        kind: TokKind::Dollar,
+                        text: name,
+                        parts: Vec::new(),
+                        pos,
+                        index,
+                        escaped: false,
+                    });
                 } else {
                     toks.push(Token {
                         kind: TokKind::Word,
                         text: "$".into(),
-                        parts: vec![QuotedPart { quote: None, text: "$".into(), is_var: false, index: None, is_subst: false }],
+                        parts: vec![QuotedPart {
+                            quote: None,
+                            text: "$".into(),
+                            is_var: false,
+                            index: None,
+                            is_subst: false,
+                        }],
                         pos,
                         index: None,
                         escaped: false,
@@ -197,24 +273,45 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                 }
             }
             '"' | '\'' => {
-                let quote = if c == '"' { QuoteKind::Double } else { QuoteKind::Single };
+                let quote = if c == '"' {
+                    QuoteKind::Double
+                } else {
+                    QuoteKind::Single
+                };
                 let mut parts: Vec<QuotedPart> = Vec::new();
                 bump!();
                 let mut buf = String::new();
                 loop {
                     if i >= chars.len() {
                         return Err(ParseError {
-                            message: format!("unterminated {} quote", if quote == QuoteKind::Double { "double" } else { "single" }),
+                            message: format!(
+                                "unterminated {} quote",
+                                if quote == QuoteKind::Double {
+                                    "double"
+                                } else {
+                                    "single"
+                                }
+                            ),
                             pos,
                             incomplete: false,
                         });
                     }
                     let ch = chars[i];
-                    if ch == (if quote == QuoteKind::Double { '"' } else { '\'' }) {
+                    if ch
+                        == (if quote == QuoteKind::Double {
+                            '"'
+                        } else {
+                            '\''
+                        })
+                    {
                         bump!();
                         break;
                     }
-                    if quote == QuoteKind::Double && ch == '\\' && i + 1 < chars.len() && matches!(chars[i + 1], '"' | '\\' | '$' | '\n') {
+                    if quote == QuoteKind::Double
+                        && ch == '\\'
+                        && i + 1 < chars.len()
+                        && matches!(chars[i + 1], '"' | '\\' | '$' | '\n')
+                    {
                         bump!();
                         if chars[i] == '\n' {
                             bump!();
@@ -226,12 +323,25 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     }
                     if quote == QuoteKind::Double && ch == '$' {
                         if !buf.is_empty() {
-                            parts.push(QuotedPart { quote: Some(quote), text: std::mem::take(&mut buf), is_var: false, index: None, is_subst: false });
+                            parts.push(QuotedPart {
+                                quote: Some(quote),
+                                text: std::mem::take(&mut buf),
+                                is_var: false,
+                                index: None,
+                                is_subst: false,
+                            });
                         }
                         bump!();
                         if i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                            let (name, index) = read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
-                            parts.push(QuotedPart { quote: Some(quote), text: name, is_var: true, index, is_subst: false });
+                            let (name, index) =
+                                read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
+                            parts.push(QuotedPart {
+                                quote: Some(quote),
+                                text: name,
+                                is_var: true,
+                                index,
+                                is_subst: false,
+                            });
                         } else {
                             buf.push('$');
                         }
@@ -239,7 +349,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     }
                     if quote == QuoteKind::Double && ch == '(' {
                         if !buf.is_empty() {
-                            parts.push(QuotedPart { quote: Some(quote), text: std::mem::take(&mut buf), is_var: false, index: None, is_subst: false });
+                            parts.push(QuotedPart {
+                                quote: Some(quote),
+                                text: std::mem::take(&mut buf),
+                                is_var: false,
+                                index: None,
+                                is_subst: false,
+                            });
                         }
                         bump!();
                         let mut depth = 1usize;
@@ -261,7 +377,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                                 incomplete: false,
                             });
                         }
-                        parts.push(QuotedPart { quote: Some(quote), text: chars[start..i].iter().collect(), is_var: false, index: None, is_subst: true });
+                        parts.push(QuotedPart {
+                            quote: Some(quote),
+                            text: chars[start..i].iter().collect(),
+                            is_var: false,
+                            index: None,
+                            is_subst: true,
+                        });
                         bump!();
                         continue;
                     }
@@ -269,24 +391,52 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     bump!();
                 }
                 if !buf.is_empty() || parts.is_empty() {
-                    parts.push(QuotedPart { quote: Some(quote), text: buf, is_var: false, index: None, is_subst: false });
+                    parts.push(QuotedPart {
+                        quote: Some(quote),
+                        text: buf,
+                        is_var: false,
+                        index: None,
+                        is_subst: false,
+                    });
                 }
-                toks.push(Token { kind: TokKind::Word, text: String::new(), parts, pos, index: None, escaped: false });
+                toks.push(Token {
+                    kind: TokKind::Word,
+                    text: String::new(),
+                    parts,
+                    pos,
+                    index: None,
+                    escaped: false,
+                });
             }
             _ => {
                 let mut parts: Vec<QuotedPart> = Vec::new();
                 let mut buf = String::new();
                 let mut esc = false;
                 loop {
-                    if i >= chars.len() || matches!(chars[i], ' ' | '\t' | '\r' | '\n' | '|' | ';' | '(' | ')' | '<' | '>') {
+                    if i >= chars.len()
+                        || matches!(
+                            chars[i],
+                            ' ' | '\t' | '\r' | '\n' | '|' | ';' | '(' | ')' | '<' | '>'
+                        )
+                    {
                         break;
                     }
                     let ch = chars[i];
                     if ch == '"' || ch == '\'' {
                         if !buf.is_empty() {
-                            parts.push(QuotedPart { quote: None, text: std::mem::take(&mut buf), is_var: false, index: None, is_subst: false });
+                            parts.push(QuotedPart {
+                                quote: None,
+                                text: std::mem::take(&mut buf),
+                                is_var: false,
+                                index: None,
+                                is_subst: false,
+                            });
                         }
-                        let quote = if ch == '"' { QuoteKind::Double } else { QuoteKind::Single };
+                        let quote = if ch == '"' {
+                            QuoteKind::Double
+                        } else {
+                            QuoteKind::Single
+                        };
                         let qpos = SourcePos { line, col };
                         bump!();
                         let mut qbuf = String::new();
@@ -294,17 +444,34 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                         loop {
                             if i >= chars.len() {
                                 return Err(ParseError {
-                                    message: format!("unterminated {} quote", if quote == QuoteKind::Double { "double" } else { "single" }),
+                                    message: format!(
+                                        "unterminated {} quote",
+                                        if quote == QuoteKind::Double {
+                                            "double"
+                                        } else {
+                                            "single"
+                                        }
+                                    ),
                                     pos: qpos,
                                     incomplete: false,
                                 });
                             }
                             let qch = chars[i];
-                            if qch == (if quote == QuoteKind::Double { '"' } else { '\'' }) {
+                            if qch
+                                == (if quote == QuoteKind::Double {
+                                    '"'
+                                } else {
+                                    '\''
+                                })
+                            {
                                 bump!();
                                 break;
                             }
-                            if quote == QuoteKind::Double && qch == '\\' && i + 1 < chars.len() && matches!(chars[i + 1], '"' | '\\' | '$' | '\n') {
+                            if quote == QuoteKind::Double
+                                && qch == '\\'
+                                && i + 1 < chars.len()
+                                && matches!(chars[i + 1], '"' | '\\' | '$' | '\n')
+                            {
                                 bump!();
                                 if chars[i] == '\n' {
                                     bump!();
@@ -316,12 +483,28 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                             }
                             if quote == QuoteKind::Double && qch == '$' {
                                 if !qbuf.is_empty() {
-                                    qparts.push(QuotedPart { quote: Some(quote), text: std::mem::take(&mut qbuf), is_var: false, index: None, is_subst: false });
+                                    qparts.push(QuotedPart {
+                                        quote: Some(quote),
+                                        text: std::mem::take(&mut qbuf),
+                                        is_var: false,
+                                        index: None,
+                                        is_subst: false,
+                                    });
                                 }
                                 bump!();
-                                if i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                                    let (name, index) = read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
-                                    qparts.push(QuotedPart { quote: Some(quote), text: name, is_var: true, index, is_subst: false });
+                                if i < chars.len()
+                                    && (chars[i].is_alphanumeric() || chars[i] == '_')
+                                {
+                                    let (name, index) = read_var_name_and_index(
+                                        &chars, &mut i, &mut line, &mut col,
+                                    )?;
+                                    qparts.push(QuotedPart {
+                                        quote: Some(quote),
+                                        text: name,
+                                        is_var: true,
+                                        index,
+                                        is_subst: false,
+                                    });
                                 } else {
                                     qbuf.push('$');
                                 }
@@ -329,7 +512,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                             }
                             if quote == QuoteKind::Double && qch == '(' {
                                 if !qbuf.is_empty() {
-                                    qparts.push(QuotedPart { quote: Some(quote), text: std::mem::take(&mut qbuf), is_var: false, index: None, is_subst: false });
+                                    qparts.push(QuotedPart {
+                                        quote: Some(quote),
+                                        text: std::mem::take(&mut qbuf),
+                                        is_var: false,
+                                        index: None,
+                                        is_subst: false,
+                                    });
                                 }
                                 bump!();
                                 let mut depth = 1usize;
@@ -351,7 +540,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                                         incomplete: false,
                                     });
                                 }
-                                qparts.push(QuotedPart { quote: Some(quote), text: chars[start..i].iter().collect(), is_var: false, index: None, is_subst: true });
+                                qparts.push(QuotedPart {
+                                    quote: Some(quote),
+                                    text: chars[start..i].iter().collect(),
+                                    is_var: false,
+                                    index: None,
+                                    is_subst: true,
+                                });
                                 bump!();
                                 continue;
                             }
@@ -359,7 +554,13 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                             bump!();
                         }
                         if !qbuf.is_empty() || qparts.is_empty() {
-                            qparts.push(QuotedPart { quote: Some(quote), text: qbuf, is_var: false, index: None, is_subst: false });
+                            qparts.push(QuotedPart {
+                                quote: Some(quote),
+                                text: qbuf,
+                                is_var: false,
+                                index: None,
+                                is_subst: false,
+                            });
                         }
                         parts.extend(qparts);
                         continue;
@@ -375,13 +576,26 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                         bump!();
                         if i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
                             if !buf.is_empty() {
-                                parts.push(QuotedPart { quote: None, text: std::mem::take(&mut buf), is_var: false, index: None, is_subst: false });
+                                parts.push(QuotedPart {
+                                    quote: None,
+                                    text: std::mem::take(&mut buf),
+                                    is_var: false,
+                                    index: None,
+                                    is_subst: false,
+                                });
                             }
-                            let (name, index) = read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
+                            let (name, index) =
+                                read_var_name_and_index(&chars, &mut i, &mut line, &mut col)?;
                             if name.is_empty() {
                                 buf.push('$');
                             } else {
-                                parts.push(QuotedPart { quote: None, text: name, is_var: true, index, is_subst: false });
+                                parts.push(QuotedPart {
+                                    quote: None,
+                                    text: name,
+                                    is_var: true,
+                                    index,
+                                    is_subst: false,
+                                });
                             }
                         } else {
                             buf.push('$');
@@ -392,10 +606,23 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
                     bump!();
                 }
                 if !buf.is_empty() || parts.is_empty() {
-                    parts.push(QuotedPart { quote: None, text: buf, is_var: false, index: None, is_subst: false });
+                    parts.push(QuotedPart {
+                        quote: None,
+                        text: buf,
+                        is_var: false,
+                        index: None,
+                        is_subst: false,
+                    });
                 }
                 let text: String = parts.iter().map(|p| p.text.clone()).collect();
-                toks.push(Token { kind: TokKind::Word, text, parts, pos, index: None, escaped: esc });
+                toks.push(Token {
+                    kind: TokKind::Word,
+                    text,
+                    parts,
+                    pos,
+                    index: None,
+                    escaped: esc,
+                });
             }
         }
     }
@@ -428,7 +655,10 @@ mod tests {
 
     #[test]
     fn simple_words() {
-        assert_eq!(kinds("echo hi"), vec![TokKind::Word, TokKind::Word, TokKind::Eof]);
+        assert_eq!(
+            kinds("echo hi"),
+            vec![TokKind::Word, TokKind::Word, TokKind::Eof]
+        );
     }
 
     #[test]

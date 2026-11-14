@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::lexer::{lex, QuotedPart, TokKind, Token};
+use crate::lexer::{QuotedPart, TokKind, Token, lex};
 
 pub fn parse(src: &str) -> Result<Program, ParseError> {
     let toks = lex(src)?;
@@ -26,8 +26,16 @@ fn parse_index_spec(raw: &str, pos: SourcePos) -> Result<crate::ast::IndexSpec, 
         });
     }
     if let Some((lhs, rhs)) = src.split_once("..") {
-        let start = if lhs.is_empty() { None } else { Some(parse_index_int(lhs, pos)?) };
-        let end = if rhs.is_empty() { None } else { Some(parse_index_int(rhs, pos)?) };
+        let start = if lhs.is_empty() {
+            None
+        } else {
+            Some(parse_index_int(lhs, pos)?)
+        };
+        let end = if rhs.is_empty() {
+            None
+        } else {
+            Some(parse_index_int(rhs, pos)?)
+        };
         Ok(crate::ast::IndexSpec::Range { start, end })
     } else {
         Ok(crate::ast::IndexSpec::At(parse_index_int(src, pos)?))
@@ -49,13 +57,14 @@ fn parse_index_int(src: &str, pos: SourcePos) -> Result<isize, ParseError> {
             incomplete: false,
         });
     }
-    let parsed = src
-        .parse::<isize>()
-        .map_err(|_| ParseError {
-            message: format!("invalid index '{}', expected integer or range like '1..2'", src),
-            pos,
-            incomplete: false,
-        })?;
+    let parsed = src.parse::<isize>().map_err(|_| ParseError {
+        message: format!(
+            "invalid index '{}', expected integer or range like '1..2'",
+            src
+        ),
+        pos,
+        incomplete: false,
+    })?;
     Ok(parsed)
 }
 
@@ -147,8 +156,15 @@ impl Parser {
             match t.kind {
                 TokKind::Eof | TokKind::RParen => break,
                 TokKind::Word if stop.iter().any(|kw| self.bare_word(&t, kw)) => break,
-                TokKind::Word if (self.bare_word(&t, "and") || self.bare_word(&t, "or")) && !stmts.is_empty() => {
-                    let op = if self.bare_word(&t, "and") { ChainOp::And } else { ChainOp::Or };
+                TokKind::Word
+                    if (self.bare_word(&t, "and") || self.bare_word(&t, "or"))
+                        && !stmts.is_empty() =>
+                {
+                    let op = if self.bare_word(&t, "and") {
+                        ChainOp::And
+                    } else {
+                        ChainOp::Or
+                    };
                     self.next();
                     let prev = stmts.last_mut().expect("checked above");
                     match prev {
@@ -235,7 +251,10 @@ impl Parser {
         let name = self.next().text;
 
         let mut params = Vec::new();
-        while !matches!(self.peek().kind, TokKind::Newline | TokKind::Semi | TokKind::Eof) {
+        while !matches!(
+            self.peek().kind,
+            TokKind::Newline | TokKind::Semi | TokKind::Eof
+        ) {
             let t = self.peek().clone();
             match t.kind {
                 TokKind::Word => params.push(self.next().text),
@@ -245,7 +264,12 @@ impl Parser {
 
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
-        Ok(Stmt::Function { name, params, body, chain: None })
+        Ok(Stmt::Function {
+            name,
+            params,
+            body,
+            chain: None,
+        })
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParseError> {
@@ -266,7 +290,12 @@ impl Parser {
         } else {
             self.expect_keyword("end")?;
         }
-        Ok(Stmt::If { cond, then_body, else_body, chain: None })
+        Ok(Stmt::If {
+            cond,
+            then_body,
+            else_body,
+            chain: None,
+        })
     }
 
     fn parse_if_no_end(&mut self) -> Result<Stmt, ParseError> {
@@ -282,7 +311,12 @@ impl Parser {
                 else_body = self.parse_block_start()?;
             }
         }
-        Ok(Stmt::If { cond, then_body, else_body, chain: None })
+        Ok(Stmt::If {
+            cond,
+            then_body,
+            else_body,
+            chain: None,
+        })
     }
 
     fn parse_block_start(&mut self) -> Result<Vec<Stmt>, ParseError> {
@@ -292,27 +326,45 @@ impl Parser {
 
     fn parse_for(&mut self) -> Result<Stmt, ParseError> {
         let t = self.next();
-        if t.kind != TokKind::Word || t.parts.len() != 1 || t.parts[0].quote.is_some() || t.parts[0].is_var {
-            return Err(ParseError { message: "expected variable name".into(), pos: t.pos,
-                            incomplete: false,
-                        });
+        if t.kind != TokKind::Word
+            || t.parts.len() != 1
+            || t.parts[0].quote.is_some()
+            || t.parts[0].is_var
+        {
+            return Err(ParseError {
+                message: "expected variable name".into(),
+                pos: t.pos,
+                incomplete: false,
+            });
         }
         let var = t.text;
         self.expect_keyword("in")?;
         let mut items = Vec::new();
-        while !matches!(self.peek().kind, TokKind::Newline | TokKind::Semi | TokKind::Eof) {
+        while !matches!(
+            self.peek().kind,
+            TokKind::Newline | TokKind::Semi | TokKind::Eof
+        ) {
             items.push(self.parse_expr()?);
         }
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
-        Ok(Stmt::For { var, items, body, chain: None })
+        Ok(Stmt::For {
+            var,
+            items,
+            body,
+            chain: None,
+        })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, ParseError> {
         let cond = self.parse_job()?;
         let body = self.parse_block_start()?;
         self.expect_keyword("end")?;
-        Ok(Stmt::While { cond, body, chain: None })
+        Ok(Stmt::While {
+            cond,
+            body,
+            chain: None,
+        })
     }
 
     fn parse_switch(&mut self) -> Result<Stmt, ParseError> {
@@ -329,7 +381,10 @@ impl Parser {
             }
             self.expect_keyword("case")?;
             let mut patterns = Vec::new();
-            while !matches!(self.peek().kind, TokKind::Newline | TokKind::Semi | TokKind::Eof) {
+            while !matches!(
+                self.peek().kind,
+                TokKind::Newline | TokKind::Semi | TokKind::Eof
+            ) {
                 patterns.push(self.parse_expr()?);
             }
             if patterns.is_empty() {
@@ -338,7 +393,11 @@ impl Parser {
             let body = self.parse_block_start()?;
             cases.push(Case { patterns, body });
         }
-        Ok(Stmt::Switch { value, cases, chain: None })
+        Ok(Stmt::Switch {
+            value,
+            cases,
+            chain: None,
+        })
     }
 
     fn parse_job(&mut self) -> Result<Job, ParseError> {
@@ -365,7 +424,11 @@ impl Parser {
             let rest = self.parse_job()?;
             chain = Some((op, Box::new(rest)));
         }
-        Ok(Job { negated, pipeline, chain })
+        Ok(Job {
+            negated,
+            pipeline,
+            chain,
+        })
     }
 
     fn parse_command(&mut self) -> Result<Command, ParseError> {
@@ -382,8 +445,10 @@ impl Parser {
                         self.next();
                         self.token_to_expr(&t)?
                     };
-                    while matches!(self.peek().kind, TokKind::Word | TokKind::Dollar | TokKind::LParen)
-                        && self.adjacent_concat_arg(&t, self.peek())
+                    while matches!(
+                        self.peek().kind,
+                        TokKind::Word | TokKind::Dollar | TokKind::LParen
+                    ) && self.adjacent_concat_arg(&t, self.peek())
                     {
                         let next_t = self.peek().clone();
                         self.next();
@@ -399,8 +464,8 @@ impl Parser {
                             let n: u32 = t.text.parse().map_err(|_| ParseError {
                                 message: format!("bad file descriptor '{}'", t.text),
                                 pos: t.pos,
-                            incomplete: false,
-                        })?;
+                                incomplete: false,
+                            })?;
                             let mode = match self.peek().kind {
                                 TokKind::Lt => RedirectMode::In,
                                 TokKind::Gt => RedirectMode::Out,
@@ -466,18 +531,19 @@ impl Parser {
                 let stmts = self.parse_stmts(&[])?;
                 if stmts.is_empty() {
                     return Err(ParseError {
-                        message: "empty command substitution, expected a command inside '()'".into(),
+                        message: "empty command substitution, expected a command inside '()'"
+                            .into(),
                         pos: t.pos,
-                            incomplete: false,
-                        });
+                        incomplete: false,
+                    });
                 }
                 let close = self.peek().clone();
                 if close.kind != TokKind::RParen {
                     return Err(ParseError {
                         message: "unterminated command substitution, expected ')'".into(),
                         pos: t.pos,
-                            incomplete: false,
-                        });
+                        incomplete: false,
+                    });
                 }
                 self.next();
                 Ok(Expr::cmd_subst(t.pos, stmts))
@@ -498,23 +564,35 @@ impl Parser {
         }
     }
 
-    fn push_part(&mut self, pos: SourcePos, p: &QuotedPart, parts: &mut Vec<Expr>) -> Result<(), ParseError> {
+    fn push_part(
+        &mut self,
+        pos: SourcePos,
+        p: &QuotedPart,
+        parts: &mut Vec<Expr>,
+    ) -> Result<(), ParseError> {
         if p.is_var {
             if let Some(raw) = &p.index {
-                parts.push(Expr::index(pos, p.text.clone(), parse_index_spec(raw, pos)?));
+                parts.push(Expr::index(
+                    pos,
+                    p.text.clone(),
+                    parse_index_spec(raw, pos)?,
+                ));
             } else {
                 parts.push(Expr::var(pos, p.text.clone()));
             }
         } else if p.is_subst {
             let sub_toks = crate::lexer::lex(&p.text)?;
-            let mut sub = Parser { toks: sub_toks, i: 0 };
+            let mut sub = Parser {
+                toks: sub_toks,
+                i: 0,
+            };
             let stmts = sub.parse_stmts(&[])?;
             if stmts.is_empty() {
                 return Err(ParseError {
                     message: "empty command substitution, expected a command inside '()'".into(),
                     pos,
-                            incomplete: false,
-                        });
+                    incomplete: false,
+                });
             }
             if sub.peek().kind != TokKind::Eof {
                 return Err(sub.unexpected("end of command substitution"));
@@ -634,7 +712,13 @@ mod tests {
         let j = first_job("echo $x[1..3]");
         let a = &j.pipeline[0].args[1];
         assert_eq!(a.kind, ExprKind::Index);
-        assert!(matches!(a.index, Some(crate::ast::IndexSpec::Range { start: Some(1), end: Some(3) })));
+        assert!(matches!(
+            a.index,
+            Some(crate::ast::IndexSpec::Range {
+                start: Some(1),
+                end: Some(3)
+            })
+        ));
     }
 
     #[test]
@@ -660,10 +744,14 @@ mod tests {
         let j = first_job("echo (echo (echo hi))");
         let a = &j.pipeline[0].args[1];
         assert_eq!(a.kind, ExprKind::CmdSubst);
-        let Stmt::Job(sub1) = &a.stmts[0] else { panic!() };
+        let Stmt::Job(sub1) = &a.stmts[0] else {
+            panic!()
+        };
         let inner = &sub1.pipeline[0].args[1];
         assert_eq!(inner.kind, ExprKind::CmdSubst);
-        let Stmt::Job(sub2) = &inner.stmts[0] else { panic!() };
+        let Stmt::Job(sub2) = &inner.stmts[0] else {
+            panic!()
+        };
         assert_eq!(lit(&sub2.pipeline[0].args[1]), "hi");
     }
 
@@ -677,7 +765,15 @@ mod tests {
     #[test]
     fn if_else_end() {
         let stmts = parse_ok("if test $x = 1; echo yes; else; echo no; end").stmts;
-        let Stmt::If { cond, then_body, else_body, .. } = &stmts[0] else { panic!() };
+        let Stmt::If {
+            cond,
+            then_body,
+            else_body,
+            ..
+        } = &stmts[0]
+        else {
+            panic!()
+        };
         assert_eq!(lit(&cond.pipeline[0].args[0]), "test");
         assert_eq!(then_body.len(), 1);
         assert_eq!(else_body.len(), 1);
@@ -686,14 +782,18 @@ mod tests {
     #[test]
     fn if_multiline() {
         let stmts = parse_ok("if true\n  echo a\n  echo b\nend").stmts;
-        let Stmt::If { then_body, .. } = &stmts[0] else { panic!() };
+        let Stmt::If { then_body, .. } = &stmts[0] else {
+            panic!()
+        };
         assert_eq!(then_body.len(), 2);
     }
 
     #[test]
     fn else_if() {
         let stmts = parse_ok("if a; x; else if b; y; else; z; end").stmts;
-        let Stmt::If { else_body, .. } = &stmts[0] else { panic!() };
+        let Stmt::If { else_body, .. } = &stmts[0] else {
+            panic!()
+        };
         assert!(matches!(else_body[0], Stmt::If { .. }));
     }
 
@@ -707,7 +807,12 @@ mod tests {
     #[test]
     fn for_loop() {
         let stmts = parse_ok("for f in *.txt $files; echo $f; end").stmts;
-        let Stmt::For { var, items, body, .. } = &stmts[0] else { panic!() };
+        let Stmt::For {
+            var, items, body, ..
+        } = &stmts[0]
+        else {
+            panic!()
+        };
         assert_eq!(var, "f");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].kind, ExprKind::Literal);
@@ -724,7 +829,9 @@ mod tests {
     #[test]
     fn switch_case() {
         let stmts = parse_ok("switch $x; case a; echo A; case b c; echo BC; end").stmts;
-        let Stmt::Switch { cases, .. } = &stmts[0] else { panic!() };
+        let Stmt::Switch { cases, .. } = &stmts[0] else {
+            panic!()
+        };
         assert_eq!(cases.len(), 2);
         assert_eq!(cases[1].patterns.len(), 2);
     }
@@ -833,8 +940,12 @@ mod tests {
     #[test]
     fn escaped_end_is_plain_argument() {
         let mut p = parse_ok("if true\n    echo e\\nd\nend");
-        let Stmt::If { then_body, .. } = p.stmts.remove(0) else { panic!() };
-        let Stmt::Job(sub) = &then_body[0] else { panic!() };
+        let Stmt::If { then_body, .. } = p.stmts.remove(0) else {
+            panic!()
+        };
+        let Stmt::Job(sub) = &then_body[0] else {
+            panic!()
+        };
         assert_eq!(lit(&sub.pipeline[0].args[0]), "echo");
         assert_eq!(lit(&sub.pipeline[0].args[1]), "end");
     }
@@ -858,11 +969,17 @@ mod tests {
     #[test]
     fn escaped_end_does_not_terminate_block() {
         let mut p = parse_ok("if true\ne\\nd\necho hi\nend");
-        let Stmt::If { then_body, .. } = p.stmts.remove(0) else { panic!() };
+        let Stmt::If { then_body, .. } = p.stmts.remove(0) else {
+            panic!()
+        };
         assert_eq!(then_body.len(), 2);
-        let Stmt::Job(sub) = &then_body[0] else { panic!() };
+        let Stmt::Job(sub) = &then_body[0] else {
+            panic!()
+        };
         assert_eq!(lit(&sub.pipeline[0].args[0]), "end");
-        let Stmt::Job(sub) = &then_body[1] else { panic!() };
+        let Stmt::Job(sub) = &then_body[1] else {
+            panic!()
+        };
         assert_eq!(lit(&sub.pipeline[0].args[0]), "echo");
         assert_eq!(lit(&sub.pipeline[0].args[1]), "hi");
     }
@@ -879,7 +996,12 @@ mod tests {
     #[test]
     fn escaped_if_word_is_condition_job() {
         let mut p = parse_ok("if tru\\e\necho hi\nend");
-        let Stmt::If { cond, then_body, .. } = p.stmts.remove(0) else { panic!() };
+        let Stmt::If {
+            cond, then_body, ..
+        } = p.stmts.remove(0)
+        else {
+            panic!()
+        };
         assert_eq!(lit(&cond.pipeline[0].args[0]), "true");
         assert_eq!(then_body.len(), 1);
     }
@@ -902,14 +1024,21 @@ mod tests {
     fn cmd_subst_with_pipeline_inside() {
         let j = first_job("echo (cat f | wc -l)");
         let a = &j.pipeline[0].args[1];
-        let Stmt::Job(sub) = &a.stmts[0] else { panic!() };
+        let Stmt::Job(sub) = &a.stmts[0] else {
+            panic!()
+        };
         assert_eq!(sub.pipeline.len(), 2);
     }
 
     #[test]
     fn function_definition_parses() {
         let p = parse_ok("function greet --description x\n  echo hi\nend");
-        let Stmt::Function { name, params, body, .. } = &p.stmts[0] else { panic!() };
+        let Stmt::Function {
+            name, params, body, ..
+        } = &p.stmts[0]
+        else {
+            panic!()
+        };
         assert_eq!(name, "greet");
         assert_eq!(params, &["--description", "x"]);
         assert_eq!(body.len(), 1);
@@ -931,14 +1060,18 @@ mod tests {
     #[test]
     fn nested_function_definition() {
         let p = parse_ok("function outer\n  function inner\n    echo hi\n  end\nend");
-        let Stmt::Function { body, .. } = &p.stmts[0] else { panic!() };
+        let Stmt::Function { body, .. } = &p.stmts[0] else {
+            panic!()
+        };
         assert!(matches!(&body[0], Stmt::Function { name, .. } if name == "inner"));
     }
 
     #[test]
     fn function_params_with_dashes() {
         let p = parse_ok("function foo --description x\n  echo hi\nend");
-        let Stmt::Function { params, body, .. } = &p.stmts[0] else { panic!() };
+        let Stmt::Function { params, body, .. } = &p.stmts[0] else {
+            panic!()
+        };
         assert_eq!(params, &["--description", "x"]);
         assert_eq!(body.len(), 1);
     }
@@ -954,5 +1087,4 @@ mod tests {
         let err = parse("function \"foo\"").unwrap_err();
         assert!(err.message.contains("function name"));
     }
-
 }

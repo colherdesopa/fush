@@ -5,7 +5,9 @@ pub struct Suggester {
 
 impl Suggester {
     pub fn new() -> Self {
-        Self { history: Vec::new() }
+        Self {
+            history: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, line: &str) {

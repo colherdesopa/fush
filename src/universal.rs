@@ -22,12 +22,7 @@ pub fn universals_file() -> Option<PathBuf> {
 /// Persist `name values...` to the universals file (env must already be
 /// updated by the caller). Rejects values containing tabs or newlines.
 #[allow(dead_code)]
-pub fn save(
-    rt: &Runtime,
-    path: &Path,
-    name: &str,
-    values: &[String],
-) -> Result<(), String> {
+pub fn save(rt: &Runtime, path: &Path, name: &str, values: &[String]) -> Result<(), String> {
     for v in values {
         if v.contains('\t') || v.contains('\n') {
             return Err(format!(
@@ -124,10 +119,7 @@ fn read_lines(path: &Path) -> Vec<(String, Vec<String>)> {
     read_lines_with_warnings(path, path).0
 }
 
-fn read_lines_with_warnings(
-    path: &Path,
-    display: &Path,
-) -> (Vec<(String, Vec<String>)>, bool) {
+fn read_lines_with_warnings(path: &Path, display: &Path) -> (Vec<(String, Vec<String>)>, bool) {
     let Ok(bytes) = std::fs::read(path) else {
         return (Vec::new(), false);
     };

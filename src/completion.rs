@@ -92,16 +92,27 @@ impl CompletionEngine {
         }
     }
 
-    pub fn complete_line(&self, line: &str, pos: usize, dirs: &dyn DirSource) -> (usize, Vec<String>) {
+    pub fn complete_line(
+        &self,
+        line: &str,
+        pos: usize,
+        dirs: &dyn DirSource,
+    ) -> (usize, Vec<String>) {
         let pos = pos.min(line.len());
         let (start, quote_len, word) = extract_word(line, pos);
         let matched = &word[quote_len..];
         if !is_command_position(&line[..start]) {
             let cmd = command_word_before(&line[..start]);
             if let Some(rules) = self.completions.get(&cmd) {
-                return (start + quote_len, self.complete_with_rules(rules, matched, dirs));
+                return (
+                    start + quote_len,
+                    self.complete_with_rules(rules, matched, dirs),
+                );
             }
-            return (start + quote_len, self.complete_path(matched, None, dirs, false));
+            return (
+                start + quote_len,
+                self.complete_path(matched, None, dirs, false),
+            );
         }
         let mut candidates = Vec::new();
         for name in self.builtins.iter().chain(self.functions.iter()) {
@@ -351,7 +362,12 @@ mod tests {
         let (_, cands) = complete_files("echo ", 5, file_entries());
         assert_eq!(
             cands,
-            vec!["main.rs".to_string(), "notes.txt".to_string(), "src/".to_string(), "tests/".to_string()]
+            vec![
+                "main.rs".to_string(),
+                "notes.txt".to_string(),
+                "src/".to_string(),
+                "tests/".to_string()
+            ]
         );
         let (_, cands) = complete_files("echo ec", 7, file_entries());
         assert!(cands.is_empty());
@@ -468,11 +484,7 @@ mod tests {
         }
     }
 
-    fn complete_files(
-        line: &str,
-        pos: usize,
-        entries: Vec<DirEntryLite>,
-    ) -> (usize, Vec<String>) {
+    fn complete_files(line: &str, pos: usize, entries: Vec<DirEntryLite>) -> (usize, Vec<String>) {
         let dirs = FileDirs { entries };
         engine().complete_line(line, pos, &dirs)
     }
@@ -524,20 +536,29 @@ mod tests {
         let (_, cands) = complete_files("echo ", 5, file_entries());
         assert!(!cands.iter().any(|c| c.starts_with('.')));
         let (_, cands) = complete_files("echo .", 6, file_entries());
-        assert_eq!(
-            cands,
-            vec![".config/".to_string(), ".hidden".to_string()]
+        assert_eq!(cands, vec![".config/".to_string(), ".hidden".to_string()]);
+        assert!(
+            complete_files("echo .", 6, file_entries())
+                .1
+                .contains(&".config/".to_string())
         );
-        assert!(complete_files("echo .", 6, file_entries()).1.contains(&".config/".to_string()));
     }
 
     #[test]
     fn subdirectory_path_completes_under_dir_part() {
-        let entries = vec![FileDirs::file("mod.rs"), FileDirs::dir("sub"), FileDirs::file("lib.rs")];
+        let entries = vec![
+            FileDirs::file("mod.rs"),
+            FileDirs::dir("sub"),
+            FileDirs::file("lib.rs"),
+        ];
         let (_, cands) = complete_files("echo src/", 9, entries.clone());
         assert_eq!(
             cands,
-            vec!["src/lib.rs".to_string(), "src/mod.rs".to_string(), "src/sub/".to_string()]
+            vec![
+                "src/lib.rs".to_string(),
+                "src/mod.rs".to_string(),
+                "src/sub/".to_string()
+            ]
         );
         let (_, cands) = complete_files("echo src/m", 10, entries);
         assert_eq!(cands, vec!["src/mod.rs".to_string()]);
@@ -587,13 +608,22 @@ mod tests {
                 ..Default::default()
             }],
         );
-        let dirs = FileDirs { entries: file_entries() };
+        let dirs = FileDirs {
+            entries: file_entries(),
+        };
         let (_, cands) = eng.complete_line("probe a", 7, &dirs);
         assert_eq!(cands, vec!["alpha".to_string()]);
         let (_, cands) = eng.complete_line("probe ", 6, &dirs);
         assert_eq!(
             cands,
-            vec!["alpha".to_string(), "beta".to_string(), "main.rs".to_string(), "notes.txt".to_string(), "src/".to_string(), "tests/".to_string()]
+            vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "main.rs".to_string(),
+                "notes.txt".to_string(),
+                "src/".to_string(),
+                "tests/".to_string()
+            ]
         );
     }
 
@@ -608,7 +638,9 @@ mod tests {
                 ..Default::default()
             }],
         );
-        let dirs = FileDirs { entries: file_entries() };
+        let dirs = FileDirs {
+            entries: file_entries(),
+        };
         let (_, cands) = eng.complete_line("probe z", 7, &dirs);
         assert!(cands.is_empty());
         let (_, cands) = eng.complete_line("probe ", 6, &dirs);
@@ -632,7 +664,9 @@ mod tests {
                 },
             ],
         );
-        let dirs = FileDirs { entries: file_entries() };
+        let dirs = FileDirs {
+            entries: file_entries(),
+        };
         let (_, cands) = eng.complete_line("probe ", 6, &dirs);
         assert_eq!(cands, vec!["alpha".to_string(), "beta".to_string()]);
     }
@@ -648,7 +682,9 @@ mod tests {
                 ..Default::default()
             }],
         );
-        let dirs = FileDirs { entries: file_entries() };
+        let dirs = FileDirs {
+            entries: file_entries(),
+        };
         let (_, cands) = eng.complete_line("cd ", 3, &dirs);
         assert_eq!(cands, vec!["src/".to_string(), "tests/".to_string()]);
         let (_, cands) = eng.complete_line("cd m", 4, &dirs);
@@ -661,15 +697,29 @@ mod tests {
         eng.completions.insert(
             "set".to_string(),
             vec![CompletionRule {
-                candidates: vec!["-l".into(), "-x".into(), "-U".into(), "-e".into(), "-q".into()],
+                candidates: vec![
+                    "-l".into(),
+                    "-x".into(),
+                    "-U".into(),
+                    "-e".into(),
+                    "-q".into(),
+                ],
                 ..Default::default()
             }],
         );
-        let dirs = FileDirs { entries: file_entries() };
+        let dirs = FileDirs {
+            entries: file_entries(),
+        };
         let (_, cands) = eng.complete_line("set -", 5, &dirs);
         assert_eq!(
             cands,
-            vec!["-U".to_string(), "-e".to_string(), "-l".to_string(), "-q".to_string(), "-x".to_string()]
+            vec![
+                "-U".to_string(),
+                "-e".to_string(),
+                "-l".to_string(),
+                "-q".to_string(),
+                "-x".to_string()
+            ]
         );
     }
 

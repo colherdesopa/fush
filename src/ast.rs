@@ -108,7 +108,10 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexSpec {
     At(isize),
-    Range { start: Option<isize>, end: Option<isize> },
+    Range {
+        start: Option<isize>,
+        end: Option<isize>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,26 +139,74 @@ pub struct Expr {
 
 impl Expr {
     pub fn literal(pos: SourcePos, text: String) -> Expr {
-        Expr { pos, kind: ExprKind::Literal, text, parts: Vec::new(), stmts: Vec::new(), index: None, quoted: false }
+        Expr {
+            pos,
+            kind: ExprKind::Literal,
+            text,
+            parts: Vec::new(),
+            stmts: Vec::new(),
+            index: None,
+            quoted: false,
+        }
     }
 
     pub fn var(pos: SourcePos, name: String) -> Expr {
-        Expr { pos, kind: ExprKind::Var, text: name, parts: Vec::new(), stmts: Vec::new(), index: None, quoted: false }
+        Expr {
+            pos,
+            kind: ExprKind::Var,
+            text: name,
+            parts: Vec::new(),
+            stmts: Vec::new(),
+            index: None,
+            quoted: false,
+        }
     }
 
     pub fn index(pos: SourcePos, name: String, index: IndexSpec) -> Expr {
-        Expr { pos, kind: ExprKind::Index, text: name, parts: Vec::new(), stmts: Vec::new(), index: Some(index), quoted: false }
+        Expr {
+            pos,
+            kind: ExprKind::Index,
+            text: name,
+            parts: Vec::new(),
+            stmts: Vec::new(),
+            index: Some(index),
+            quoted: false,
+        }
     }
 
     pub fn concat(pos: SourcePos, parts: Vec<Expr>) -> Expr {
-        Expr { pos, kind: ExprKind::Concat, text: String::new(), parts, stmts: Vec::new(), index: None, quoted: false }
+        Expr {
+            pos,
+            kind: ExprKind::Concat,
+            text: String::new(),
+            parts,
+            stmts: Vec::new(),
+            index: None,
+            quoted: false,
+        }
     }
 
     pub fn cmd_subst(pos: SourcePos, stmts: Vec<Stmt>) -> Expr {
-        Expr { pos, kind: ExprKind::CmdSubst, text: String::new(), parts: Vec::new(), stmts, index: None, quoted: false }
+        Expr {
+            pos,
+            kind: ExprKind::CmdSubst,
+            text: String::new(),
+            parts: Vec::new(),
+            stmts,
+            index: None,
+            quoted: false,
+        }
     }
 
     pub fn quoted_cmd_subst(pos: SourcePos, stmts: Vec<Stmt>) -> Expr {
-        Expr { pos, kind: ExprKind::QuotedCmdSubst, text: String::new(), parts: Vec::new(), stmts, index: None, quoted: true }
+        Expr {
+            pos,
+            kind: ExprKind::QuotedCmdSubst,
+            text: String::new(),
+            parts: Vec::new(),
+            stmts,
+            index: None,
+            quoted: true,
+        }
     }
 }

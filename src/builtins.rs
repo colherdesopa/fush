@@ -4,10 +4,7 @@ use crate::runtime::Runtime;
 #[derive(Debug)]
 pub enum BuiltinResult {
     /// Builtin ran in-process; status and optional captured stdout.
-    Done {
-        status: i32,
-        out: Option<Vec<u8>>,
-    },
+    Done { status: i32, out: Option<Vec<u8>> },
     /// `exit` was invoked; the shell should terminate with this code.
     Exit(i32),
 }
@@ -602,14 +599,20 @@ mod tests {
         rt.profile_loading = false;
         let r = profile_builtin(&mut rt, &args(&["allow", "git"]));
         match r {
-            BuiltinResult::Done { status: 1, out: None } => {}
+            BuiltinResult::Done {
+                status: 1,
+                out: None,
+            } => {}
             other => panic!("expected error result, got {other:?}"),
         }
     }
 
     fn assert_usage_error(r: BuiltinResult) {
         match r {
-            BuiltinResult::Done { status: 1, out: None } => {}
+            BuiltinResult::Done {
+                status: 1,
+                out: None,
+            } => {}
             other => panic!("expected usage error, got {other:?}"),
         }
     }
@@ -960,8 +963,14 @@ mod tests {
     #[test]
     fn complete_registers_and_accumulates_rules() {
         let mut rt = Runtime::new();
-        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-a", "one two"]), 0);
-        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-a", "three"]), 0);
+        assert_eq!(
+            status_of(&mut rt, "complete", &["-c", "probe", "-a", "one two"]),
+            0
+        );
+        assert_eq!(
+            status_of(&mut rt, "complete", &["-c", "probe", "-a", "three"]),
+            0
+        );
         let rules = &rt.completions["probe"];
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].candidates, vec!["one", "two"]);
@@ -971,7 +980,10 @@ mod tests {
     #[test]
     fn complete_e_erases_rules() {
         let mut rt = Runtime::new();
-        assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-a", "one"]), 0);
+        assert_eq!(
+            status_of(&mut rt, "complete", &["-c", "probe", "-a", "one"]),
+            0
+        );
         assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-e"]), 0);
         assert!(!rt.completions.contains_key("probe"));
         assert_eq!(status_of(&mut rt, "complete", &["-c", "probe", "-e"]), 0);
@@ -981,7 +993,11 @@ mod tests {
     fn complete_f_sets_suppression_and_d_stores_description() {
         let mut rt = Runtime::new();
         assert_eq!(
-            status_of(&mut rt, "complete", &["-c", "probe", "-f", "-d", "the desc"]),
+            status_of(
+                &mut rt,
+                "complete",
+                &["-c", "probe", "-f", "-d", "the desc"]
+            ),
             0
         );
         let rules = &rt.completions["probe"];

@@ -96,7 +96,10 @@ pub fn highlight(src: &str) -> Vec<(String, Style)> {
         let start = i;
         while i < bytes.len() {
             let next = src[i..].chars().next().unwrap();
-            if next.is_whitespace() || matches!(next, '|' | ';' | '(' | ')' | '<' | '>') || next == '#' {
+            if next.is_whitespace()
+                || matches!(next, '|' | ';' | '(' | ')' | '<' | '>')
+                || next == '#'
+            {
                 break;
             }
             if next == '"' || next == '\'' {
@@ -222,8 +225,12 @@ pub fn reset_external_cache_for_tests() {
 
 #[cfg(test)]
 fn cached_entry(name: &str) -> Option<bool> {
-    let Ok(guard) = EXTERNAL_CACHE.lock() else { panic!("cache poisoned") };
-    guard.as_ref().and_then(|cache| cache.entries.get(name).copied())
+    let Ok(guard) = EXTERNAL_CACHE.lock() else {
+        panic!("cache poisoned")
+    };
+    guard
+        .as_ref()
+        .and_then(|cache| cache.entries.get(name).copied())
 }
 
 fn classify_token(raw: &str, command_pos: bool) -> Style {
@@ -268,7 +275,10 @@ fn next_command_pos(raw: &str, _style: Style) -> bool {
 }
 
 fn is_keyword(value: &str) -> bool {
-    matches!(value, "and" | "or" | "not" | "if" | "else" | "for" | "while" | "switch" | "end" | "case")
+    matches!(
+        value,
+        "and" | "or" | "not" | "if" | "else" | "for" | "while" | "switch" | "end" | "case"
+    )
 }
 
 fn strip_outer_quotes(raw: &str) -> &str {
@@ -336,7 +346,10 @@ mod tests {
     #[test]
     fn invalid_red() {
         let spans = highlight("definitely_not_a_cmd");
-        assert_eq!(spans, vec![("definitely_not_a_cmd".to_string(), Style::Red)]);
+        assert_eq!(
+            spans,
+            vec![("definitely_not_a_cmd".to_string(), Style::Red)]
+        );
     }
 
     #[test]

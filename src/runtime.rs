@@ -1,5 +1,5 @@
-use crate::ast::{Expr, ExprKind, IndexSpec, Stmt};
 use crate::ast::ExprKind::QuotedCmdSubst;
+use crate::ast::{Expr, ExprKind, IndexSpec, Stmt};
 use crate::completion::CompletionRule;
 use crate::exec;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -154,11 +154,7 @@ impl Runtime {
                 return false;
             }
             let prefix = path_components(prefix);
-            prefix.len() <= target.len()
-                && prefix
-                    .iter()
-                    .zip(target.iter())
-                    .all(|(p, t)| eq(p, t))
+            prefix.len() <= target.len() && prefix.iter().zip(target.iter()).all(|(p, t)| eq(p, t))
         })
     }
 
@@ -186,7 +182,13 @@ impl Runtime {
         self.completions.insert(
             "set".to_string(),
             vec![CompletionRule {
-                candidates: vec!["-l".into(), "-x".into(), "-U".into(), "-e".into(), "-q".into()],
+                candidates: vec![
+                    "-l".into(),
+                    "-x".into(),
+                    "-U".into(),
+                    "-e".into(),
+                    "-q".into(),
+                ],
                 ..Default::default()
             }],
         );
@@ -202,7 +204,8 @@ impl Runtime {
     }
 
     pub fn register_function(&mut self, name: &str, params: Vec<String>, body: Vec<Stmt>) {
-        self.functions.insert(name.to_string(), Rc::new(FunctionDef { params, body }));
+        self.functions
+            .insert(name.to_string(), Rc::new(FunctionDef { params, body }));
     }
 
     fn indexed_values(&self, name: &str, index: &IndexSpec) -> Vec<String> {
@@ -257,7 +260,9 @@ impl Runtime {
         match e.kind {
             ExprKind::Literal => Ok(vec![e.text.clone()]),
             ExprKind::Var => Ok(self.env.get(&e.text).unwrap_or_default()),
-            ExprKind::Index => Ok(self.indexed_values(&e.text, e.index.as_ref().expect("index expr has index"))),
+            ExprKind::Index => {
+                Ok(self.indexed_values(&e.text, e.index.as_ref().expect("index expr has index")))
+            }
             ExprKind::CmdSubst => {
                 let out = self.capture_stmts(&e.stmts)?;
                 Ok(cmdsubst_words(&out))
@@ -275,7 +280,10 @@ impl Runtime {
                     let part_words = match part.kind {
                         ExprKind::Literal => vec![part.text.clone()],
                         ExprKind::Var => self.env.get(&part.text).unwrap_or_default(),
-                        ExprKind::Index => self.indexed_values(&part.text, part.index.as_ref().expect("index expr has index")),
+                        ExprKind::Index => self.indexed_values(
+                            &part.text,
+                            part.index.as_ref().expect("index expr has index"),
+                        ),
                         ExprKind::CmdSubst => {
                             let out = self.capture_stmts(&part.stmts)?;
                             cmdsubst_words(&out)
@@ -318,7 +326,11 @@ impl Runtime {
         match words.len() {
             1 => Ok(words.into_iter().next().expect("checked len")),
             0 => Ok(String::new()),
-            _ => Err(format!("{}: expanded to {} words, expected one", e.pos, words.len())),
+            _ => Err(format!(
+                "{}: expanded to {} words, expected one",
+                e.pos,
+                words.len()
+            )),
         }
     }
 
@@ -387,10 +399,8 @@ mod tests {
     fn rt_with(vars: &[(&str, &[&str])]) -> Runtime {
         let mut rt = Runtime::new();
         for (name, vals) in vars {
-            rt.env.set_global(
-                name,
-                vals.iter().map(|s| s.to_string()).collect(),
-            );
+            rt.env
+                .set_global(name, vals.iter().map(|s| s.to_string()).collect());
         }
         rt
     }
@@ -404,8 +414,8 @@ mod tests {
 
     #[test]
     fn var_expands_to_separate_words() {
-        let mut rt = rt_with(&[("x", &["a", "b", "c"])])
-;        let e = Expr::var(Default::default(), "x".into());
+        let mut rt = rt_with(&[("x", &["a", "b", "c"])]);
+        let e = Expr::var(Default::default(), "x".into());
         assert_eq!(rt.expand(&e).unwrap(), vec!["a", "b", "c"]);
     }
 
@@ -432,25 +442,145 @@ mod tests {
 
     #[test]
     fn index_and_slice_expand_as_list_selection() {
-        let mut rt = rt_with(&[("x", &["a", "b", "c"])])
-;        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(2))).unwrap(), vec!["b"]);
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(-1))).unwrap(), vec!["c"]);
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(1), end: Some(2) })).unwrap(), vec!["a", "b"]);
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: None, end: Some(2) })).unwrap(), vec!["a", "b"]);
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(2), end: None })).unwrap(), vec!["b", "c"]);
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::At(9))).unwrap(), Vec::<String>::new());
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "missing".into(), IndexSpec::At(1))).unwrap(), Vec::<String>::new());
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: None, end: Some(0) })).unwrap(), Vec::<String>::new());
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(0), end: None })).unwrap(), Vec::<String>::new());
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(-9), end: Some(2) })).unwrap(), Vec::<String>::new());
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(-2), end: Some(-1) })).unwrap(), vec!["b", "c"]);
-        assert_eq!(rt.expand(&Expr::index(Default::default(), "x".into(), IndexSpec::Range { start: Some(9), end: Some(2) })).unwrap(), Vec::<String>::new());
+        let mut rt = rt_with(&[("x", &["a", "b", "c"])]);
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::At(2)
+            ))
+            .unwrap(),
+            vec!["b"]
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::At(-1)
+            ))
+            .unwrap(),
+            vec!["c"]
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: Some(1),
+                    end: Some(2)
+                }
+            ))
+            .unwrap(),
+            vec!["a", "b"]
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: None,
+                    end: Some(2)
+                }
+            ))
+            .unwrap(),
+            vec!["a", "b"]
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: Some(2),
+                    end: None
+                }
+            ))
+            .unwrap(),
+            vec!["b", "c"]
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::At(9)
+            ))
+            .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "missing".into(),
+                IndexSpec::At(1)
+            ))
+            .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: None,
+                    end: Some(0)
+                }
+            ))
+            .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: Some(0),
+                    end: None
+                }
+            ))
+            .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: Some(-9),
+                    end: Some(2)
+                }
+            ))
+            .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: Some(-2),
+                    end: Some(-1)
+                }
+            ))
+            .unwrap(),
+            vec!["b", "c"]
+        );
+        assert_eq!(
+            rt.expand(&Expr::index(
+                Default::default(),
+                "x".into(),
+                IndexSpec::Range {
+                    start: Some(9),
+                    end: Some(2)
+                }
+            ))
+            .unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
     fn local_shadows_global_and_pop_restores() {
-        let mut rt = rt_with(&[("x", &["global"])])
-;        rt.env.push_scope();
+        let mut rt = rt_with(&[("x", &["global"])]);
+        rt.env.push_scope();
         rt.env.set_local("x", vec!["local".into()]);
         assert_eq!(rt.env.get("x"), Some(vec!["local".into()]));
         rt.env.pop_scope();
@@ -479,7 +609,8 @@ mod tests {
     #[test]
     fn exported_vars_become_child_overrides() {
         let mut rt = Runtime::new();
-        rt.env.set_global("PATH", vec!["/bin".to_string(), "/usr/bin".to_string()]);
+        rt.env
+            .set_global("PATH", vec!["/bin".to_string(), "/usr/bin".to_string()]);
         rt.env.export("PATH");
         rt.env.set_global("PRIVATE", vec!["x".into()]);
         let overrides = rt.env.child_overrides();
