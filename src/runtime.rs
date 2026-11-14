@@ -103,7 +103,12 @@ pub struct Runtime {
 
 #[allow(dead_code)]
 fn path_components(path: &Path) -> Vec<String> {
-    path.components()
+    let s = path.as_os_str().to_string_lossy();
+    let s = s.strip_prefix(r"\\?\UNC\").map(String::from).unwrap_or_else(|| {
+        s.strip_prefix(r"\\?\").map(String::from).unwrap_or_else(|| s.to_string())
+    });
+    Path::new(&s)
+        .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect()
 }

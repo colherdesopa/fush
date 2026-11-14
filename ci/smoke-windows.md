@@ -171,3 +171,29 @@ Limitations:
   target; replaced with `#[cfg(windows)]` / `#[cfg(not(windows))]` so the
   executable-bit check is Unix-only at compile time. Behavior on Linux is
   unchanged (full suite green).
+
+## Profiles milestone
+
+Environment:
+- Build host: WSL CachyOS (Linux x86_64), rustc 1.97.0, target x86_64-pc-windows-gnu, mingw-w64-gcc toolchain
+- Windows target: Microsoft Windows [Version 10.0.26300.9974]
+- Binary: `cargo build --release --target x86_64-pc-windows-gnu`, copied to `C:\Users\Francisco\fush-smoke\fush.exe`
+- Smoke driven from WSL via `.cmd` files in `C:\Users\Francisco\fush-smoke`; profile files live in a scratch `USERPROFILE` tree (`pconf\.config\fush\profiles\`), never the real `%USERPROFILE%\.config\fush`
+
+Profile files are fish-syntax (`profile allow CMD...`, `profile allow-write PATH...`) and live at `<config dir>\profiles\<name>.fush`, where the config dir is `%USERPROFILE%\.config\fush` on Windows.
+
+Smoke matrix for profiles:
+| Command | Expected | Result | Notes |
+| --- | --- | --- | --- |
+| `fush.exe --profile -c "cmd /c echo hi"` | not-allowed message, exit 1 | PASS | read-only mode blocks externals |
+| `fush.exe --profile -c "echo hi"` | `hi`, exit 0 | PASS | builtins free in read-only mode |
+| `--profile smoke` with profile file `profile allow cmd`: `fush.exe --profile smoke -c "cmd /c echo hi"` | `hi`, exit 0 | PASS | profile file loaded from scratch USERPROFILE tree |
+| `--profile smoke` with `profile allow-write C:\Users\Francisco\fush-smoke`: `echo x > C:\Users\Francisco\fush-smoke\w.txt` | file written, exit 0 | PASS | |
+| same profile: `echo x > C:\Windows\w.txt` | not-allowed, exit 1, file absent | PASS | gate blocks before the OS; no admin prompt |
+| allow-write with lowercase `c:\users\francisco\fush-smoke`: write to `C:\Users\...\wc.txt` | file written, exit 0 | PASS | component-wise case-insensitive match on Windows |
+| `fush.exe --profile ghost -c "echo hi"` | profile error, exit 2 | PASS | missing profile file fails closed |
+
+Fix made during smoke: `std::fs::canonicalize` on Windows returns verbatim `\\?\C:\...` paths, which never matched a `C:\...` allow-write entry, so every gated write was rejected. `path_components` in `src/runtime.rs` now strips the `\\?\` / `\\?\UNC\` prefix before comparison; full suite (208 unit + 85 integration) and clippy stay green on Linux.
+
+Deviations:
+- Unquoted backslash paths in `-c` and in profile files still lex `C:\Users` as `C:Users` (backslash escape, same known limitation as the baseline `cd C:\Windows` entry). The smoke uses escaped backslashes (`C:\\Users`) in `-c` strings; profile files work with the natural unquoted form because the profile builtin receives the already-unescaped token. Same documented workaround: quote paths or escape backslashes.
