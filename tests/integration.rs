@@ -1261,7 +1261,9 @@ fn missing_profile_fails_startup_exit_2_repl() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn fush");
-    child.stdin.take().unwrap().write_all(b"echo hi\n").unwrap();
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"echo hi\n");
+    }
     let out = child.wait_with_output().unwrap();
     let _ = std::fs::remove_dir_all(&home);
     assert_eq!(out.status.code(), Some(2));
