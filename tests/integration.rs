@@ -800,3 +800,154 @@ fn set_ul_rejected_in_c_mode() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("not supported"));
 }
+
+fn fush_with_home(home: &std::path::Path, args: &[&str]) -> (String, String, i32) {
+    let out = Command::new(env!("CARGO_BIN_EXE_fush"))
+        .args(args)
+        .env("HOME", home)
+        .env_remove("USERPROFILE")
+        .output()
+        .expect("run fush");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+fn profile_home(name: Option<&str>, profile_body: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "fush-profile-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    if let Some(name) = name {
+        let pdir = dir.join(".config").join("fush").join("profiles");
+        std::fs::create_dir_all(&pdir).expect("mkdir profiles");
+        std::fs::write(pdir.join(format!("{name}.fush")), profile_body).expect("write profile");
+    } else {
+        std::fs::create_dir_all(&dir).expect("mkdir home");
+    }
+    dir
+}
+
+#[test]
+fn read_only_profile_blocks_external() {
+    let home = profile_home(None, "");
+    let (out, err, code) = fush_with_home(&home, &["--profile", "-c", "sh -c 'echo hi'"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out, "");
+    assert!(err.contains("not allowed in this profile: sh"));
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn read_only_profile_builtins_free() {
+    let home = profile_home(None, "");
+    let (out, err, code) = fush_with_home(&home, &["--profile", "-c", "echo hi; set x 1; test $x = 1; and echo ok"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out, "hi\nok\n");
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn named_profile_allowlisted_external_runs() {
+    let home = profile_home(Some("dev"), "profile allow sh");
+    let (out, err, code) = fush_with_home(&home, &["--profile", "dev", "-c", "sh -c 'echo hi'"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out, "hi\n");
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn named_profile_unlisted_external_blocked() {
+    let home = profile_home(Some("dev"), "profile allow sh");
+    let (out, err, code) = fush_with_home(&home, &["--profile", "dev", "-c", "git status"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out, "");
+    assert!(err.contains("not allowed in this profile: git"));
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn read_only_profile_write_redirect_blocked() {
+    let home = profile_home(None, "");
+    let work = std::env::temp_dir().join(format!("fush-wr-{}-{}", std::process::id(), std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let target = work.join("out.txt");
+    let (_, err, code) = fush_with_home(
+        &home,
+        &["--profile", "-c", &format!("echo hi > {}", target.display())],
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(!target.exists());
+    assert!(err.contains("not allowed in this profile: write to"));
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn named_profile_write_redirect_allowed_in_allowlisted_dir() {
+    let home = profile_home(Some("dev"), "profile allow sh\nprofile allow-write /tmp");
+    let work = std::env::temp_dir().join(format!("fush-wa-{}-{}", std::process::id(), std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let target = work.join("out.txt");
+    let (_, err, code) = fush_with_home(
+        &home,
+        &["--profile", "dev", "-c", &format!("echo hi > {}", target.display())],
+    );
+    let contents = std::fs::read_to_string(&target).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&work);
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+    assert_eq!(contents, "hi\n");
+}
+
+#[test]
+fn read_only_profile_cmdsubst_inner_blocked() {
+    let home = profile_home(None, "");
+    let (out, err, _code) = fush_with_home(&home, &["--profile", "-c", "echo (sh -c 'echo hi')"]);
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(err.contains("not allowed in this profile: sh"));
+    assert!(!out.contains("hi"));
+}
+
+#[test]
+fn read_only_profile_builtin_echo_redirect_blocked() {
+    let home = profile_home(None, "");
+    let work = std::env::temp_dir().join(format!("fush-wb-{}-{}", std::process::id(), std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let target = work.join("out.txt");
+    let (_, err, code) = fush_with_home(
+        &home,
+        &["--profile", "-c", &format!("echo hi > {}", target.display())],
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(!target.exists());
+    assert!(err.contains("not allowed in this profile: write to"));
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn read_only_profile_cd_free() {
+    let home = profile_home(None, "");
+    let work = std::env::temp_dir().join(format!("fush-cd-{}-{}", std::process::id(), std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let (out, err, code) = fush_with_home(&home, &["--profile", "-c", &format!("cd {}; echo $status", work.display())]);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&work);
+    assert_eq!(err, "");
+    assert_eq!(code, 0);
+    assert_eq!(out.trim_end(), "0");
+}

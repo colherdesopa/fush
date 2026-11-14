@@ -313,6 +313,12 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
             prev_out = None;
             last_external_out = None;
         } else {
+            if !rt.profile_allows(&name) {
+                eprintln!("fush: not allowed in this profile: {name}");
+                status = 1;
+                prev_out = if is_last { None } else { Some(Vec::new()) };
+                continue;
+            }
             let mut command = Child::new(&name);
             command.args(&argv[1..]);
             for (k, v) in rt.env.child_overrides() {
@@ -382,6 +388,7 @@ fn emit_builtin_output(
     for r in &cmd.redirects {
         if r.mode == RedirectMode::Out && r.fd == 1 {
             let target = rt.expand_one(&r.target)?;
+            check_write_allowed(rt, &target)?;
             let mut f = std::fs::File::create(&target)
                 .map_err(|e| format!("cannot redirect to '{target}': {e}"))?;
             f.write_all(&bytes).map_err(|e| e.to_string())?;
@@ -402,6 +409,40 @@ fn emit_builtin_output(
     }
 }
 
+/// Check the profile's write allow-list for `target` before any file is
+/// created or opened. The target is resolved to an absolute path: an
+/// existing file is canonicalized; otherwise its parent directory is
+/// canonicalized and the file name appended; failing that, the current
+/// directory is joined. Relative paths that cannot be resolved are
+/// rejected (fail-closed).
+fn check_write_allowed(rt: &Runtime, target: &str) -> Result<(), String> {
+    let path = std::path::Path::new(target);
+    let abs = if path.is_absolute() {
+        if path.exists() {
+            std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        } else {
+            match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                Some(parent) if parent.exists() => {
+                    match std::fs::canonicalize(parent) {
+                        Ok(canon) => canon.join(path.file_name().unwrap_or_default()),
+                        Err(_) => path.to_path_buf(),
+                    }
+                }
+                _ => std::env::current_dir().unwrap_or_default().join(path),
+            }
+        }
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(path)
+    };
+    if rt.profile_allows_write(&abs) {
+        Ok(())
+    } else {
+        Err(format!("fush: not allowed in this profile: write to {target}"))
+    }
+}
+
 /// Which standard descriptors the caller already redirected explicitly.
 #[derive(Default)]
 struct Redirected {
@@ -417,6 +458,9 @@ fn apply_redirects(
     let mut redirected = Redirected::default();
     for r in redirects {
         let target = rt.expand_one(&r.target)?;
+        if r.mode == RedirectMode::Out {
+            check_write_allowed(rt, &target)?;
+        }
         match (r.mode, r.fd) {
             (RedirectMode::In, 0) => {
                 let f = std::fs::File::open(&target)

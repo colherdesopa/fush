@@ -111,7 +111,6 @@ fn path_components(path: &Path) -> Vec<String> {
 impl Runtime {
     /// Whether the external command `cmd` may run. No profile = allowed;
     /// empty allow-list = nothing allowed.
-    #[allow(dead_code)]
     pub fn profile_allows(&self, cmd: &str) -> bool {
         match &self.profile {
             None => true,
@@ -122,7 +121,6 @@ impl Runtime {
     /// Whether writing to `path` is allowed: component-wise prefix match
     /// against the allow-write list, absolute paths only. Relative paths
     /// are rejected; on Windows components compare case-insensitively.
-    #[allow(dead_code)]
     pub fn profile_allows_write(&self, path: &Path) -> bool {
         let Some(profile) = &self.profile else {
             return true;
