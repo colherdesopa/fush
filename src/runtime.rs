@@ -101,16 +101,22 @@ pub struct Runtime {
     pub profile_loading: bool,
 }
 
-#[allow(dead_code)]
 fn path_components(path: &Path) -> Vec<String> {
-    let s = path.as_os_str().to_string_lossy();
-    let s = s.strip_prefix(r"\\?\UNC\").map(String::from).unwrap_or_else(|| {
-        s.strip_prefix(r"\\?\").map(String::from).unwrap_or_else(|| s.to_string())
-    });
+    let s = strip_verbatim_prefix(&path.as_os_str().to_string_lossy());
     Path::new(&s)
         .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect()
+}
+
+fn strip_verbatim_prefix(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        s.strip_prefix(r"\\?\")
+            .map(String::from)
+            .unwrap_or_else(|| s.to_string())
+    }
 }
 
 impl Runtime {
@@ -578,6 +584,23 @@ mod profile_tests {
         assert!(rt.profile_allows_write(std::path::Path::new("C:\\work\\a.txt")));
         assert!(rt.profile_allows_write(std::path::Path::new("C:\\WORK\\sub\\b.txt")));
         assert!(!rt.profile_allows_write(std::path::Path::new("C:\\work-evil\\a.txt")));
+    }
+
+    #[test]
+    fn strip_verbatim_prefix_removes_drive_form() {
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\C:\Work\a.txt"),
+            r"C:\Work\a.txt"
+        );
+        assert_eq!(strip_verbatim_prefix(r"C:\Work\a.txt"), r"C:\Work\a.txt");
+    }
+
+    #[test]
+    fn strip_verbatim_prefix_restores_unc_form() {
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\UNC\server\share\dir"),
+            r"\\server\share\dir"
+        );
     }
 
     #[cfg(not(windows))]
