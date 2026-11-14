@@ -1,9 +1,13 @@
 use crate::completion::CompletionRule;
 use crate::runtime::Runtime;
 
+#[derive(Debug)]
 pub enum BuiltinResult {
     /// Builtin ran in-process; status and optional captured stdout.
-    Done { status: i32, out: Option<Vec<u8>> },
+    Done {
+        status: i32,
+        out: Option<Vec<u8>>,
+    },
     /// `exit` was invoked; the shell should terminate with this code.
     Exit(i32),
 }
@@ -24,6 +28,7 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "true" => Some(true_builtin(rt, args)),
         "false" => Some(false_builtin(rt, args)),
         "complete" => Some(complete(rt, args)),
+        "profile" => Some(profile_builtin(rt, args)),
         _ => None,
     }
 }
@@ -529,6 +534,43 @@ fn split_unquoted_spaces(value: &str) -> Vec<String> {
     parts
 }
 
+fn profile_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    if !rt.profile_loading {
+        return err("fush: profile: only valid while loading a profile");
+    }
+    let Some(first) = args.first() else {
+        return err("fush: profile: expected 'allow CMD...' or 'allow-write PATH...'");
+    };
+    let Some(profile) = rt.profile.as_mut() else {
+        return err("fush: profile: only valid while loading a profile");
+    };
+    match first.as_str() {
+        "allow" => {
+            if args.len() < 2 {
+                return err("fush: profile: expected 'allow CMD...' or 'allow-write PATH...'");
+            }
+            for name in &args[1..] {
+                profile.allow.insert(name.clone());
+            }
+        }
+        "allow-write" => {
+            if args.len() < 2 {
+                return err("fush: profile: expected 'allow CMD...' or 'allow-write PATH...'");
+            }
+            for path in &args[1..] {
+                profile.allow_write.insert(path.clone());
+            }
+        }
+        _ => {
+            return err("fush: profile: expected 'allow CMD...' or 'allow-write PATH...'");
+        }
+    }
+    BuiltinResult::Done {
+        status: 0,
+        out: None,
+    }
+}
+
 fn err(msg: &str) -> BuiltinResult {
     eprintln!("{msg}");
     BuiltinResult::Done {
@@ -540,6 +582,48 @@ fn err(msg: &str) -> BuiltinResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_builtin_accumulates_allows() {
+        let mut rt = Runtime::new();
+        rt.profile = Some(crate::runtime::Profile::default());
+        rt.profile_loading = true;
+        profile_builtin(&mut rt, &args(&["allow", "git", "ls"]));
+        profile_builtin(&mut rt, &args(&["allow-write", "/tmp/work", "/tmp/out"]));
+        let p = rt.profile.as_ref().unwrap();
+        assert!(p.allow.contains("git") && p.allow.contains("ls"));
+        assert!(p.allow_write.contains("/tmp/work"));
+        assert_eq!(p.allow.len(), 2);
+    }
+
+    #[test]
+    fn profile_builtin_rejects_outside_loading() {
+        let mut rt = Runtime::new();
+        rt.profile_loading = false;
+        let r = profile_builtin(&mut rt, &args(&["allow", "git"]));
+        match r {
+            BuiltinResult::Done { status: 1, out: None } => {}
+            other => panic!("expected error result, got {other:?}"),
+        }
+    }
+
+    fn assert_usage_error(r: BuiltinResult) {
+        match r {
+            BuiltinResult::Done { status: 1, out: None } => {}
+            other => panic!("expected usage error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn profile_builtin_usage_errors() {
+        let mut rt = Runtime::new();
+        rt.profile = Some(crate::runtime::Profile::default());
+        rt.profile_loading = true;
+        assert_usage_error(profile_builtin(&mut rt, &args(&[])));
+        assert_usage_error(profile_builtin(&mut rt, &args(&["deny", "x"])));
+        assert_usage_error(profile_builtin(&mut rt, &args(&["allow"])));
+        assert_usage_error(profile_builtin(&mut rt, &args(&["allow-write"])));
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

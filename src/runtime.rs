@@ -2,7 +2,8 @@ use crate::ast::{Expr, ExprKind, IndexSpec, Stmt};
 use crate::ast::ExprKind::QuotedCmdSubst;
 use crate::completion::CompletionRule;
 use crate::exec;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::Path;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +75,14 @@ impl Env {
     }
 }
 
+/// Allow-list state collected from a profile file (`--profile NAME`).
+/// Empty lists allow nothing: fail closed.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Profile {
+    pub allow: BTreeSet<String>,
+    pub allow_write: BTreeSet<String>,
+}
+
 pub struct Runtime {
     pub env: Env,
     pub status: i32,
@@ -85,9 +94,65 @@ pub struct Runtime {
     pub function_return_stack: Vec<Option<i32>>,
     /// Manual per-command completion rules (`complete -c cmd ...`), session-only.
     pub completions: HashMap<String, Vec<CompletionRule>>,
+    /// Active profile; None = no `--profile` flag, everything allowed.
+    pub profile: Option<Profile>,
+    /// True only while the profile file (or the read-only virtual load) is
+    /// being sourced; gates the `profile` builtin.
+    pub profile_loading: bool,
+}
+
+#[allow(dead_code)]
+fn path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect()
 }
 
 impl Runtime {
+    /// Whether the external command `cmd` may run. No profile = allowed;
+    /// empty allow-list = nothing allowed.
+    #[allow(dead_code)]
+    pub fn profile_allows(&self, cmd: &str) -> bool {
+        match &self.profile {
+            None => true,
+            Some(p) => p.allow.contains(cmd),
+        }
+    }
+
+    /// Whether writing to `path` is allowed: component-wise prefix match
+    /// against the allow-write list, absolute paths only. Relative paths
+    /// are rejected; on Windows components compare case-insensitively.
+    #[allow(dead_code)]
+    pub fn profile_allows_write(&self, path: &Path) -> bool {
+        let Some(profile) = &self.profile else {
+            return true;
+        };
+        if !path.is_absolute() {
+            return false;
+        }
+        let target = path_components(path);
+        let windows = cfg!(windows);
+        let eq = |a: &str, b: &str| {
+            if windows {
+                a.eq_ignore_ascii_case(b)
+            } else {
+                a == b
+            }
+        };
+        profile.allow_write.iter().any(|prefix| {
+            let prefix = Path::new(prefix.as_str());
+            if !prefix.is_absolute() {
+                return false;
+            }
+            let prefix = path_components(prefix);
+            prefix.len() <= target.len()
+                && prefix
+                    .iter()
+                    .zip(target.iter())
+                    .all(|(p, t)| eq(p, t))
+        })
+    }
+
     pub fn new() -> Runtime {
         let mut rt = Runtime {
             env: Env::default(),
@@ -99,6 +164,8 @@ impl Runtime {
             function_depth: 0,
             function_return_stack: Vec::new(),
             completions: HashMap::new(),
+            profile: None,
+            profile_loading: false,
         };
         rt.register_default_completions();
         rt
@@ -437,5 +504,84 @@ mod tests {
         assert_eq!(cmdsubst_words(b"single"), vec!["single"]);
         assert_eq!(cmdsubst_words(b""), Vec::<String>::new());
         assert_eq!(cmdsubst_words(b"\n"), Vec::<String>::new());
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn rt_with_profile(allow: &[&str], allow_write: &[&str]) -> Runtime {
+        let mut rt = Runtime::new();
+        let mut p = Profile::default();
+        for a in allow {
+            p.allow.insert(a.to_string());
+        }
+        for w in allow_write {
+            p.allow_write.insert(w.to_string());
+        }
+        rt.profile = Some(p);
+        rt
+    }
+
+    #[test]
+    fn no_profile_allows_everything() {
+        let rt = Runtime::new();
+        assert!(rt.profile_allows("git"));
+        assert!(rt.profile_allows_write(std::path::Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn empty_profile_allows_nothing() {
+        let rt = rt_with_profile(&[], &[]);
+        assert!(!rt.profile_allows("git"));
+        assert!(!rt.profile_allows_write(std::path::Path::new("/tmp/x")));
+    }
+
+    #[test]
+    fn allow_list_exact_match() {
+        let rt = rt_with_profile(&["git", "ls"], &[]);
+        assert!(rt.profile_allows("git"));
+        assert!(!rt.profile_allows("gitk"));
+        assert!(!rt.profile_allows("gi"));
+    }
+
+    #[test]
+    fn write_prefix_is_component_wise() {
+        let rt = rt_with_profile(&[], &["/work"]);
+        assert!(rt.profile_allows_write(std::path::Path::new("/work/a.txt")));
+        assert!(rt.profile_allows_write(std::path::Path::new("/work")));
+        assert!(!rt.profile_allows_write(std::path::Path::new("/work-evil/a.txt")));
+        assert!(!rt.profile_allows_write(std::path::Path::new("/wor")));
+    }
+
+    #[test]
+    fn write_relative_paths_rejected() {
+        let rt = rt_with_profile(&[], &["/work"]);
+        assert!(!rt.profile_allows_write(std::path::Path::new("work/a.txt")));
+        assert!(!rt.profile_allows_write(std::path::Path::new("a.txt")));
+    }
+
+    #[test]
+    fn write_relative_prefix_rejected() {
+        let rt = rt_with_profile(&[], &["work"]);
+        assert!(!rt.profile_allows_write(std::path::Path::new("/work/a.txt")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_case_insensitive_on_windows() {
+        let rt = rt_with_profile(&[], &["C:\\Work"]);
+        assert!(rt.profile_allows_write(std::path::Path::new("C:\\work\\a.txt")));
+        assert!(rt.profile_allows_write(std::path::Path::new("C:\\WORK\\sub\\b.txt")));
+        assert!(!rt.profile_allows_write(std::path::Path::new("C:\\work-evil\\a.txt")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn write_case_sensitive_on_unix() {
+        let rt = rt_with_profile(&[], &["/Work"]);
+        assert!(!rt.profile_allows_write(std::path::Path::new("/work/a.txt")));
+        assert!(rt.profile_allows_write(std::path::Path::new("/Work/a.txt")));
     }
 }
