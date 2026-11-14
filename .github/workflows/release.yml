@@ -41,7 +41,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: fush-setup
-          path: installer/fush-setup-*.exe
+          path: Output/fush-setup-*.exe
 
   release:
     needs: [build, installer]
