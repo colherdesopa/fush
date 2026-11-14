@@ -804,7 +804,11 @@ mod tests {
     #[test]
     fn cd_fails_on_file() {
         let mut rt = Runtime::new();
-        assert_eq!(status_of(&mut rt, "cd", &["/etc/hostname"]), 1);
+        let file = std::env::temp_dir().join("fush-cd-file-probe");
+        std::fs::write(&file, "x").unwrap();
+        let file_str = file.to_string_lossy().into_owned();
+        assert_eq!(status_of(&mut rt, "cd", &[&file_str]), 1);
+        std::fs::remove_file(&file).ok();
     }
 
     #[test]
@@ -866,11 +870,17 @@ mod tests {
     #[test]
     fn test_file_ops() {
         let mut rt = Runtime::new();
-        assert_eq!(status_of(&mut rt, "test", &["-f", "/etc/hostname"]), 0);
-        assert_eq!(status_of(&mut rt, "test", &["-f", "/etc"]), 1);
-        assert_eq!(status_of(&mut rt, "test", &["-d", "/etc"]), 0);
-        assert_eq!(status_of(&mut rt, "test", &["-d", "/etc/hostname"]), 1);
+        let dir = std::env::temp_dir();
+        let file = dir.join("fush-test-file-probe");
+        std::fs::write(&file, "x").unwrap();
+        let file_str = file.to_string_lossy().into_owned();
+        let dir_str = dir.to_string_lossy().into_owned();
+        assert_eq!(status_of(&mut rt, "test", &["-f", &file_str]), 0);
+        assert_eq!(status_of(&mut rt, "test", &["-f", &dir_str]), 1);
+        assert_eq!(status_of(&mut rt, "test", &["-d", &dir_str]), 0);
+        assert_eq!(status_of(&mut rt, "test", &["-d", &file_str]), 1);
         assert_eq!(status_of(&mut rt, "test", &["-f", "/nonexistent-xyz"]), 1);
+        std::fs::remove_file(&file).ok();
     }
 
     #[test]

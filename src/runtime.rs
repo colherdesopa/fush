@@ -688,11 +688,15 @@ mod profile_tests {
 
     #[test]
     fn write_prefix_is_component_wise() {
-        let rt = rt_with_profile(&[], &["/work"]);
-        assert!(rt.profile_allows_write(std::path::Path::new("/work/a.txt")));
-        assert!(rt.profile_allows_write(std::path::Path::new("/work")));
-        assert!(!rt.profile_allows_write(std::path::Path::new("/work-evil/a.txt")));
-        assert!(!rt.profile_allows_write(std::path::Path::new("/wor")));
+        let root = if cfg!(windows) { "C:\\work" } else { "/work" };
+        let rt = rt_with_profile(&[], &[root]);
+        assert!(rt.profile_allows_write(std::path::Path::new(&format!("{root}/a.txt"))));
+        assert!(rt.profile_allows_write(std::path::Path::new(root)));
+        assert!(!rt.profile_allows_write(std::path::Path::new(&format!("{root}-evil/a.txt"))));
+        assert!(!rt.profile_allows_write(std::path::Path::new(&format!(
+            "{}/wo",
+            if cfg!(windows) { "C:\\" } else { "/" }
+        ))));
     }
 
     #[test]
