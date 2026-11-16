@@ -188,6 +188,7 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
     }
 
     let mut rt = runtime::Runtime::new();
+    rt.interactive = true;
     if let Err(e) = match &profile {
         Some(name) => crate::profile::load_profile(&mut rt, name.as_deref()),
         None => Ok(()),

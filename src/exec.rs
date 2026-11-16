@@ -387,6 +387,16 @@ pub fn run_pipeline(rt: &mut Runtime, pipeline: &[crate::ast::Command]) -> Resul
                 } else {
                     prev_out = Some(out.stdout);
                 }
+            } else if is_last && !redirected.stdout && rt.capture.is_none() && rt.interactive {
+                // Last stage, no pipe in, no redirection: give the child the
+                // real console so interactive programs (pwsh, vim, less)
+                // work. Capture still applies for command substitution.
+                command.stdin(Stdio::inherit());
+                command.stdout(Stdio::inherit());
+                let out = command
+                    .output()
+                    .map_err(|e| format!("failed to run '{name}': {e}"))?;
+                status = out.status.code().unwrap_or(1);
             } else {
                 if !redirected.stdout {
                     command.stdout(Stdio::piped());

@@ -87,6 +87,9 @@ pub struct Runtime {
     pub env: Env,
     pub status: i32,
     pub exited: Option<i32>,
+    /// True in an interactive session; lets external commands claim the
+    /// real console instead of piped stdio.
+    pub interactive: bool,
     pub(crate) capture: Option<Vec<u8>>,
     pub functions: HashMap<String, Rc<FunctionDef>>,
     pub abbrs: HashMap<String, String>,
@@ -163,6 +166,7 @@ impl Runtime {
             env: Env::default(),
             status: 0,
             exited: None,
+            interactive: false,
             capture: None,
             functions: HashMap::new(),
             abbrs: HashMap::new(),
