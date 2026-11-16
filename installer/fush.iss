@@ -90,9 +90,9 @@ var
   PSCommand: string;
 begin
   PSCommand := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}') + '\wt-profile.ps1' + '" -SettingsPath "' + SettingsPath + '" ' + Args;
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), PSCommand, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), PSCommand, '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
   if ResultCode <> 0 then
-    MsgBox('Windows Terminal settings were not modified (exit ' + IntToStr(ResultCode) + ').', mbError, MB_OK);
+    MsgBox('Windows Terminal settings were not modified (exit ' + IntToStr(ResultCode) + '). See %TEMP%\fush-wt-profile.log.', mbError, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

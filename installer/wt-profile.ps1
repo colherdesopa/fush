@@ -9,12 +9,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $env:TEMP 'fush-wt-profile.log'
-Start-Transcript -Path $log -Force | Out-Null
-trap {
-    "TRAP: $($_.Exception.Message)" | Out-File $log -Append
-    Stop-Transcript | Out-Null
+"=== fush wt-profile run $(Get-Date -Format o) args: $($args -join ' ') ===" | Out-File $log -Force
+"powershell version: $($PSVersionTable.PSVersion)" | Out-File $log -Append
+try {
+    "SettingsPath exists: $(Test-Path $SettingsPath)" | Out-File $log -Append
+}
+catch {
+    "pre-check failed: $($_.Exception.Message)" | Out-File $log -Append
     exit 1
 }
+$ErrorActionPreference = 'Continue'
 $profileGuid = '{8f4d1a2b-9c3e-4f7a-b5d6-e1f2a3b4c5d6}'
 $profileName = 'fush'
 
