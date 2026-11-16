@@ -1,5 +1,9 @@
 # fush
 
+<p align="center">
+  <img src="assets/logo.png" alt="fush logo" width="160">
+</p>
+
 **Friendly Unleashed Shell** — a fish-like shell, Windows-native, written in Rust.
 
 No Cygwin. No MSYS2. No WSL. No fork. Just fish's friendly syntax and UX

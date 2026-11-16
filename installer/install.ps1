@@ -42,6 +42,12 @@ if ($fushProc) {
 # --- install ---
 New-Item -ItemType Directory -Force $installDir | Out-Null
 Copy-Item (Join-Path $tmp 'fush.exe') (Join-Path $installDir 'fush.exe') -Force
+# Logo (WT profile icon); best-effort
+try {
+    $logo = Join-Path $tmp 'logo.png'
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/colherdesopa/fush/main/installer/logo.png" -OutFile $logo -UseBasicParsing
+    Copy-Item $logo (Join-Path $installDir 'logo.png') -Force
+} catch { Write-Verbose 'logo.png not shipped' }
 Ok "Installed $installDir\fush.exe"
 
 # --- PATH ---
