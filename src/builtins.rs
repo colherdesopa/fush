@@ -30,6 +30,7 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "set_color" => Some(set_color(rt, args)),
         "prompt_pwd" => Some(prompt_pwd(rt, args)),
         "fish_add_path" => Some(fish_add_path(rt, args)),
+        "update" => Some(update(rt, args)),
         _ => None,
     }
 }
@@ -845,6 +846,121 @@ fn fish_add_path(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     BuiltinResult::Done {
         status: 0,
         out: None,
+    }
+}
+
+/// `update`: fish-style self-update from inside fush. Re-runs the
+/// PowerShell one-line installer, which picks the latest release,
+/// replaces fush.exe (closing a running fush first) and refreshes the
+/// Windows Terminal profile.
+fn update(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    const USAGE: &str = "usage: update [--check]";
+    if args.len() > 1 || !args.iter().all(|a| a == "--check") {
+        return err(USAGE);
+    }
+    if args.first().map(|a| a.as_str()) == Some("--check") {
+        // Print the latest release tag and whether the running binary is
+        // older. Read-only network call.
+        let current = env!("CARGO_PKG_VERSION");
+        println!("current: v{current}");
+        match latest_tag() {
+            Ok(tag) => {
+                println!("latest:  {tag}");
+                let newer = tag
+                    .trim_start_matches('v')
+                    .split('.')
+                    .map(|p| p.parse::<u64>().unwrap_or(0))
+                    .collect::<Vec<_>>();
+                let mine = current
+                    .split('.')
+                    .map(|p| p.parse::<u64>().unwrap_or(0))
+                    .collect::<Vec<_>>();
+                if newer > mine {
+                    println!("update available");
+                    BuiltinResult::Done {
+                        status: 0,
+                        out: None,
+                    }
+                } else {
+                    println!("up to date");
+                    BuiltinResult::Done {
+                        status: 0,
+                        out: None,
+                    }
+                }
+            }
+            Err(e) => err(&format!("fush: update: {e}")),
+        }
+    } else {
+        run_installer()
+    }
+}
+
+/// Is `name` (an exe basename) resolvable on PATH?
+#[cfg(windows)]
+fn on_path(name: &str) -> bool {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path).any(|dir| dir.join(name).exists())
+}
+
+/// Latest release tag from the GitHub API.
+fn latest_tag() -> Result<String, String> {
+    let resp = std::process::Command::new(pwsh_name())
+        .args([
+            "-NoProfile",
+            "-Command",
+            "(irm -Headers @{ 'User-Agent' = 'fush' } -Uri 'https://api.github.com/repos/colherdesopa/fush/releases/latest').tag_name",
+        ])
+        .output()
+        .map_err(|e| format!("cannot start powershell: {e}"))?;
+    if !resp.status.success() {
+        return Err(String::from_utf8_lossy(&resp.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&resp.stdout).trim().to_string())
+}
+
+/// PowerShell to use: pwsh 7 if on PATH, else Windows PowerShell.
+#[cfg(windows)]
+fn pwsh_name() -> &'static str {
+    if on_path("pwsh.exe") {
+        "pwsh.exe"
+    } else {
+        "powershell.exe"
+    }
+}
+
+#[cfg(not(windows))]
+fn pwsh_name() -> &'static str {
+    // WSL/dev machines: the Windows binary via the default mount.
+    "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+}
+
+/// Spawn PowerShell with the one-line installer, inheriting the console.
+fn run_installer() -> BuiltinResult {
+    let pwsh = pwsh_name();
+    let script =
+        "irm https://raw.githubusercontent.com/colherdesopa/fush/main/installer/install.ps1 | iex";
+    let child = std::process::Command::new(pwsh)
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn();
+    match child {
+        Ok(mut c) => match c.wait() {
+            Ok(s) => BuiltinResult::Done {
+                status: s.code().unwrap_or(1),
+                out: None,
+            },
+            Err(e) => err(&format!("fush: update: {e}")),
+        },
+        Err(e) => err(&format!("fush: update: cannot start {pwsh}: {e}")),
     }
 }
 

@@ -26,6 +26,10 @@ irm https://raw.githubusercontent.com/colherdesopa/fush/main/installer/install.p
 
 Options: `-NoWT` (skip Windows Terminal profile), `-NoPath` (skip PATH).
 
+Updating from inside fush: run `update` (re-runs the installer for the
+latest release), or `update --check` to just print the current/latest
+version.
+
 ## Why
 
 fish is the friendliest shell ever built, but on Windows it only exists inside
