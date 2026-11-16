@@ -225,6 +225,8 @@ fn set(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
             "-x" => exported = true,
             "-U" => universal = true,
             "-e" => erase = true,
+            // fish's -g is fush's default scope; accept and ignore it
+            "-g" => {}
             "-Ul" | "-lU" => {
                 return err(&format!(
                     "fush: set: local universal variables are not supported\n{SET_USAGE}",

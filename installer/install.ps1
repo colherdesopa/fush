@@ -31,6 +31,14 @@ Info "Downloading fush $version..."
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
 Expand-Archive -Path $zip -DestinationPath $tmp -Force
 
+# --- close running fush so the exe can be replaced ---
+$fushProc = Get-Process -Name fush -ErrorAction SilentlyContinue
+if ($fushProc) {
+    Info 'Closing running fush...'
+    $fushProc | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+}
+
 # --- install ---
 New-Item -ItemType Directory -Force $installDir | Out-Null
 Copy-Item (Join-Path $tmp 'fush.exe') (Join-Path $installDir 'fush.exe') -Force
