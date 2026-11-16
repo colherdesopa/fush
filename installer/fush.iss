@@ -31,7 +31,8 @@ Name: "addpath"; Description: "Add fush to PATH (current user)"; Flags: checkedo
 
 [Files]
 Source: "dist\fush.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: shell
-Source: "installer\wt-profile.ps1"; DestDir: "{app}"; Flags: ignoreversion; Components: shell
+Source: "installer\wt-profile.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "installer\logo.png"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Code]
 function WTSettingsPath(): string;
