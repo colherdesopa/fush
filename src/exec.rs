@@ -181,7 +181,7 @@ fn negate(status: i32) -> i32 {
 /// stages do not run concurrently with builtins; for external-only
 /// pipelines each stage still completes before the next starts, which is
 /// acceptable for the PoC.
-fn call_function(
+pub(crate) fn call_function(
     rt: &mut Runtime,
     _name: &str,
     func: &crate::runtime::FunctionDef,

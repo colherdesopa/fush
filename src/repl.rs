@@ -202,7 +202,7 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
     let mut buffer = String::new();
     loop {
         let prompt = if buffer.is_empty() {
-            prompt_text()
+            render_prompt(&mut rt)
         } else {
             "...> ".to_string()
         };
@@ -369,6 +369,28 @@ fn read_stdin_line() -> Option<String> {
     }
 }
 
+/// Build the interactive prompt: run the user's `fish_prompt` function
+/// if one is defined (capturing its output), otherwise the built-in
+/// `user@host cwd> ` text. A trailing newline on the captured output is
+/// stripped.
+fn render_prompt(rt: &mut runtime::Runtime) -> String {
+    let func = rt.functions.get("fish_prompt").map(Rc::clone);
+    match func {
+        Some(func) => {
+            let saved = rt.capture.take();
+            rt.capture = Some(Vec::new());
+            let _ = exec::call_function(rt, "fish_prompt", &func, &[]);
+            let buf = rt.capture.take().unwrap_or_default();
+            rt.capture = saved;
+            let text = String::from_utf8_lossy(&buf)
+                .trim_end_matches('\n')
+                .to_string();
+            if text.is_empty() { prompt_text() } else { text }
+        }
+        None => prompt_text(),
+    }
+}
+
 fn prompt_text() -> String {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -528,6 +550,26 @@ mod tests {
             _ => path.to_string_lossy().to_string(),
         };
         assert_eq!(short, "~/project");
+    }
+
+    #[test]
+    fn render_prompt_uses_fish_prompt_output_when_defined() {
+        let mut rt = runtime::Runtime::new();
+        let program = parser::parse(
+            "function fish_prompt; echo -n hello; set_color brblue; echo -n '> '; end",
+        )
+        .unwrap();
+        exec::run_program(&mut rt, &program.stmts);
+        assert!(rt.functions.contains_key("fish_prompt"));
+        let prompt = render_prompt(&mut rt);
+        assert_eq!(prompt, "hello\x1b[94m> ");
+    }
+
+    #[test]
+    fn render_prompt_falls_back_when_fish_prompt_undefined() {
+        let mut rt = runtime::Runtime::new();
+        let prompt = render_prompt(&mut rt);
+        assert!(prompt.ends_with("> "));
     }
 
     #[test]

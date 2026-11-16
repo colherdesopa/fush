@@ -26,6 +26,10 @@ pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResul
         "false" => Some(false_builtin(rt, args)),
         "complete" => Some(complete(rt, args)),
         "profile" => Some(profile_builtin(rt, args)),
+        "status" => Some(status_builtin(rt, args)),
+        "set_color" => Some(set_color(rt, args)),
+        "prompt_pwd" => Some(prompt_pwd(rt, args)),
+        "fish_add_path" => Some(fish_add_path(rt, args)),
         _ => None,
     }
 }
@@ -570,6 +574,221 @@ fn profile_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
     }
 }
 
+const STATUS_USAGE: &str = "usage: status [is-interactive | is-command-substitution]";
+
+fn status_builtin(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    match args.first().map(String::as_str) {
+        None => {
+            let word = if rt.interactive {
+                "interactive"
+            } else {
+                "noninteractive"
+            };
+            BuiltinResult::Done {
+                status: 0,
+                out: Some(format!("{word}\n").into_bytes()),
+            }
+        }
+        Some("is-interactive") => BuiltinResult::Done {
+            status: if rt.interactive { 0 } else { 1 },
+            out: None,
+        },
+        Some("is-command-substitution") => BuiltinResult::Done {
+            status: if rt.capture.is_some() { 0 } else { 1 },
+            out: None,
+        },
+        Some(other) => {
+            eprintln!("fush: status: unknown subcommand '{other}'\n{STATUS_USAGE}");
+            BuiltinResult::Done {
+                status: 2,
+                out: None,
+            }
+        }
+    }
+}
+
+/// Map a fish color name (or `colorNNN` 256-color form) to its SGR code.
+fn color_code(name: &str) -> Option<&'static str> {
+    match name {
+        "normal" => Some("0"),
+        "black" => Some("30"),
+        "red" => Some("31"),
+        "green" => Some("32"),
+        "yellow" => Some("33"),
+        "blue" => Some("34"),
+        "magenta" => Some("35"),
+        "cyan" => Some("36"),
+        "white" => Some("37"),
+        "brblack" => Some("90"),
+        "brred" => Some("91"),
+        "brgreen" => Some("92"),
+        "bryellow" => Some("93"),
+        "brblue" => Some("94"),
+        "brmagenta" => Some("95"),
+        "brcyan" => Some("96"),
+        "brwhite" => Some("97"),
+        _ => {
+            let digits = name.strip_prefix("color")?;
+            if !digits.is_empty() && digits.len() <= 3 && digits.bytes().all(|b| b.is_ascii_digit())
+            {
+                // 256-color codes are dynamic; fall through to caller via
+                // the owned form below.
+                return None;
+            }
+            None
+        }
+    }
+}
+
+/// Owned SGR code for `colorNNN` (256-color palette).
+fn color_code_owned(name: &str) -> Option<String> {
+    let digits = name.strip_prefix("color")?;
+    if !digits.is_empty() && digits.len() <= 3 && digits.bytes().all(|b| b.is_ascii_digit()) {
+        Some(format!("38;5;{digits}"))
+    } else {
+        None
+    }
+}
+
+fn set_color(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    let mut bold = false;
+    let mut italic = false;
+    let mut underline = false;
+    let mut dim = false;
+    let mut color: Option<String> = None;
+    for arg in args {
+        match arg.as_str() {
+            "-b" | "--bold" | "-o" => bold = true,
+            "-i" | "--italic" => italic = true,
+            "-u" | "--underline" => underline = true,
+            "-d" | "--dim" => dim = true,
+            s if s.starts_with('-') => continue,
+            s => {
+                let code = color_code(s)
+                    .map(str::to_string)
+                    .or_else(|| color_code_owned(s));
+                match code {
+                    Some(code) => color = Some(code),
+                    None => {
+                        return err(&format!("fush: set_color: unknown color '{s}'"));
+                    }
+                }
+            }
+        }
+    }
+    let Some(color) = color else {
+        return err("fush: set_color: expected a color");
+    };
+    let mut codes = Vec::new();
+    if bold {
+        codes.push("1".to_string());
+    }
+    if dim {
+        codes.push("2".to_string());
+    }
+    if italic {
+        codes.push("3".to_string());
+    }
+    if underline {
+        codes.push("4".to_string());
+    }
+    codes.push(color);
+    BuiltinResult::Done {
+        status: 0,
+        out: Some(format!("\x1b[{}m", codes.join(";")).into_bytes()),
+    }
+}
+
+/// Render fish's `prompt_pwd` short form: `~` for the home prefix, all
+/// directory components except the last two truncated to one character.
+fn prompt_pwd_format(cwd: &str, home: Option<&str>) -> String {
+    let normalize = |s: &str| s.replace('\\', "/");
+    let cwd = normalize(cwd);
+    let home = home.map(normalize);
+    let mut components: Vec<String> = Vec::new();
+    let mut rest = cwd.as_str();
+    if let Some(home) = &home
+        && !home.is_empty()
+    {
+        if rest == home {
+            return "~".to_string();
+        }
+        if let Some(stripped) = rest.strip_prefix(home.as_str())
+            && stripped.starts_with('/')
+        {
+            components.push("~".to_string());
+            rest = stripped;
+        }
+    }
+    components.extend(
+        rest.split('/')
+            .filter(|c| !c.is_empty())
+            .map(str::to_string),
+    );
+    let absolute = cwd.starts_with('/');
+    let full = components.len().saturating_sub(2);
+    let parts: Vec<String> = components
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if i < full {
+                c.chars().take(1).collect()
+            } else {
+                c
+            }
+        })
+        .collect();
+    let joined = parts.join("/");
+    if absolute && !joined.starts_with('~') {
+        format!("/{joined}")
+    } else {
+        joined
+    }
+}
+
+fn prompt_pwd(_rt: &mut Runtime, _args: &[String]) -> BuiltinResult {
+    let cwd = std::env::current_dir()
+        .map(|p| crate::runtime::strip_verbatim_prefix(&p.to_string_lossy()))
+        .unwrap_or_else(|_| ".".to_string());
+    let home = std::env::var("HOME").ok();
+    let out = prompt_pwd_format(&cwd, home.as_deref());
+    BuiltinResult::Done {
+        status: 0,
+        out: Some(format!("{out}\n").into_bytes()),
+    }
+}
+
+fn fish_add_path(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
+    let mut paths: Vec<String> = Vec::new();
+    for arg in args {
+        if arg.starts_with('-') {
+            continue;
+        }
+        paths.push(arg.clone());
+    }
+    let existing = rt.env.get("PATH").unwrap_or_default();
+    let mut new_front: Vec<String> = Vec::new();
+    for path in &paths {
+        let dir = std::path::Path::new(path);
+        if !dir.is_dir() {
+            continue;
+        }
+        if existing.iter().any(|e| e == path) || new_front.iter().any(|e| e == path) {
+            continue;
+        }
+        new_front.push(path.clone());
+    }
+    if !new_front.is_empty() {
+        new_front.extend(existing.iter().cloned());
+        rt.env.set_global("PATH", new_front.clone());
+        rt.env.export("PATH");
+    }
+    BuiltinResult::Done {
+        status: 0,
+        out: None,
+    }
+}
+
 fn err(msg: &str) -> BuiltinResult {
     eprintln!("{msg}");
     BuiltinResult::Done {
@@ -639,6 +858,170 @@ mod tests {
             Some(BuiltinResult::Done { status, .. }) => status,
             _ => panic!("expected Done"),
         }
+    }
+
+    #[test]
+    fn status_is_interactive_tracks_runtime_flag() {
+        let mut rt = Runtime::new();
+        rt.interactive = false;
+        assert_eq!(status_of(&mut rt, "status", &["is-interactive"]), 1);
+        rt.interactive = true;
+        assert_eq!(status_of(&mut rt, "status", &["is-interactive"]), 0);
+    }
+
+    #[test]
+    fn status_bare_prints_interactive_word() {
+        let mut rt = Runtime::new();
+        rt.interactive = true;
+        match run(&mut rt, "status", &args(&[])) {
+            Some(BuiltinResult::Done {
+                status: 0,
+                out: Some(out),
+            }) => {
+                assert_eq!(out, b"interactive\n");
+            }
+            other => panic!("expected Done with output, got {other:?}"),
+        }
+        rt.interactive = false;
+        match run(&mut rt, "status", &args(&[])) {
+            Some(BuiltinResult::Done {
+                status: 0,
+                out: Some(out),
+            }) => {
+                assert_eq!(out, b"noninteractive\n");
+            }
+            other => panic!("expected Done with output, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_is_command_substitution_tracks_capture() {
+        let mut rt = Runtime::new();
+        assert_eq!(
+            status_of(&mut rt, "status", &["is-command-substitution"]),
+            1
+        );
+        rt.capture = Some(Vec::new());
+        assert_eq!(
+            status_of(&mut rt, "status", &["is-command-substitution"]),
+            0
+        );
+        rt.capture = None;
+        assert_eq!(
+            status_of(&mut rt, "status", &["is-command-substitution"]),
+            1
+        );
+    }
+
+    #[test]
+    fn status_unknown_subcommand_is_status_two() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "status", &["bogus"]), 2);
+    }
+
+    fn out_of(rt: &mut Runtime, name: &str, list: &[&str]) -> Vec<u8> {
+        match run(rt, name, &args(list)) {
+            Some(BuiltinResult::Done { out: Some(out), .. }) => out,
+            other => panic!("expected Done with output, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_color_basic_and_bright_names() {
+        let mut rt = Runtime::new();
+        assert_eq!(out_of(&mut rt, "set_color", &["red"]), b"\x1b[31m");
+        assert_eq!(out_of(&mut rt, "set_color", &["brblue"]), b"\x1b[94m");
+        assert_eq!(out_of(&mut rt, "set_color", &["normal"]), b"\x1b[0m");
+    }
+
+    #[test]
+    fn set_color_256_color_form() {
+        let mut rt = Runtime::new();
+        assert_eq!(
+            out_of(&mut rt, "set_color", &["color123"]),
+            b"\x1b[38;5;123m"
+        );
+        assert_eq!(status_of(&mut rt, "set_color", &["color9999"]), 1);
+    }
+
+    #[test]
+    fn set_color_flags_add_attributes_and_last_color_wins() {
+        let mut rt = Runtime::new();
+        assert_eq!(
+            out_of(&mut rt, "set_color", &["--bold", "green"]),
+            b"\x1b[1;32m"
+        );
+        assert_eq!(
+            out_of(&mut rt, "set_color", &["-i", "-u", "-b", "cyan"]),
+            b"\x1b[1;3;4;36m"
+        );
+        assert_eq!(out_of(&mut rt, "set_color", &["red", "blue"]), b"\x1b[34m");
+    }
+
+    #[test]
+    fn set_color_unknown_color_errors() {
+        let mut rt = Runtime::new();
+        assert_eq!(status_of(&mut rt, "set_color", &["chartreuse"]), 1);
+        assert_eq!(status_of(&mut rt, "set_color", &[]), 1);
+    }
+
+    #[test]
+    fn prompt_pwd_format_truncates_all_but_last_two() {
+        assert_eq!(
+            prompt_pwd_format("/usr/local/share/fish", None),
+            "/u/l/share/fish"
+        );
+        assert_eq!(
+            prompt_pwd_format("/home/user/project/src", Some("/home/user")),
+            "~/project/src"
+        );
+        assert_eq!(
+            prompt_pwd_format("/home/user/project/deep/src", Some("/home/user")),
+            "~/p/deep/src"
+        );
+        assert_eq!(prompt_pwd_format("/home/user", Some("/home/user")), "~");
+        assert_eq!(
+            prompt_pwd_format("/home/user/a/b", Some("/home/user")),
+            "~/a/b"
+        );
+        assert_eq!(prompt_pwd_format("/usr", None), "/usr");
+        assert_eq!(prompt_pwd_format("/usr/bin", None), "/usr/bin");
+    }
+
+    #[test]
+    fn prompt_pwd_prints_short_form_with_newline() {
+        let mut rt = Runtime::new();
+        let out = out_of(&mut rt, "prompt_pwd", &[]);
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.ends_with('\n'));
+        let cwd = std::env::current_dir().unwrap();
+        let expected = prompt_pwd_format(
+            &crate::runtime::strip_verbatim_prefix(&cwd.to_string_lossy()),
+            std::env::var("HOME").ok().as_deref(),
+        );
+        assert_eq!(text, format!("{expected}\n"));
+    }
+
+    #[test]
+    fn fish_add_path_prepends_existing_dirs_without_duplicates() {
+        let mut rt = Runtime::new();
+        rt.env
+            .set_global("PATH", vec!["/bin".into(), "/usr/bin".into()]);
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        status_of(
+            &mut rt,
+            "fish_add_path",
+            &["-g", &dir, "/nonexistent-dir-xyz"],
+        );
+        assert_eq!(
+            rt.env.get("PATH"),
+            Some(vec![dir.clone(), "/bin".into(), "/usr/bin".into()])
+        );
+        status_of(&mut rt, "fish_add_path", &[&dir]);
+        assert_eq!(
+            rt.env.get("PATH"),
+            Some(vec![dir, "/bin".into(), "/usr/bin".into()])
+        );
     }
 
     #[test]
