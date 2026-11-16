@@ -8,6 +8,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$log = Join-Path $env:TEMP 'fush-wt-profile.log'
+Start-Transcript -Path $log -Force | Out-Null
+trap {
+    "TRAP: $($_.Exception.Message)" | Out-File $log -Append
+    Stop-Transcript | Out-Null
+    exit 1
+}
 $profileGuid = '{8f4d1a2b-9c3e-4f7a-b5d6-e1f2a3b4c5d6}'
 $profileName = 'fush'
 
@@ -49,7 +56,17 @@ while ($i -lt $raw.Length) {
     else { [void]$clean.Append($c) }
     $i++
 }
-$json = ([regex]::Replace($clean.ToString(), ',(\s*[}\]])', '$1')) | ConvertFrom-Json
+$jsonText = [regex]::Replace($clean.ToString(), ',(\s*[}\]])', '$1')
+try {
+    $json = $jsonText | ConvertFrom-Json
+}
+catch {
+    "ConvertFrom-Json failed: $($_.Exception.Message)" | Out-File $log -Append
+    "--- cleaned input ---" | Out-File $log -Append
+    $jsonText | Out-File $log -Append
+    Stop-Transcript | Out-Null
+    exit 1
+}
 
 if ($Remove) {
     if ($json.profiles.list) {
