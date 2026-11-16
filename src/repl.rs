@@ -16,7 +16,6 @@ type FushEditor = Editor<FushHelper, DefaultHistory>;
 pub struct FushHelper {
     snapshot: Rc<RefCell<RuntimeSnapshot>>,
     suggester: Suggester,
-    styled_prompt: RefCell<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -43,14 +42,7 @@ impl FushHelper {
         Self {
             snapshot: Rc::new(RefCell::new(RuntimeSnapshot::default())),
             suggester,
-            styled_prompt: RefCell::new(String::new()),
         }
-    }
-
-    /// Record the styled prompt for `highlight_prompt`; `readline` gets the
-    /// plain version so rustyline measures the cursor column correctly.
-    fn set_styled_prompt(&self, styled: &str) {
-        *self.styled_prompt.borrow_mut() = styled.to_string();
     }
 
     #[allow(dead_code)]
@@ -166,22 +158,6 @@ impl rustyline::hint::Hinter for FushHelper {
 }
 
 impl rustyline::highlight::Highlighter for FushHelper {
-    fn highlight_prompt<'b, 's, 'p>(&'s self, prompt: &'p str, default: bool) -> Cow<'b, str>
-    where
-        's: 'b,
-        'p: 'b,
-    {
-        if default {
-            return Cow::Borrowed(prompt);
-        }
-        let styled = self.styled_prompt.borrow();
-        if styled.is_empty() {
-            Cow::Borrowed(prompt)
-        } else {
-            Cow::Owned(styled.clone())
-        }
-    }
-
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
         self.highlight_for(
             line,
@@ -230,11 +206,8 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
         } else {
             "...> ".to_string()
         };
-        if let Some(helper) = editor.helper_mut() {
-            helper.set_styled_prompt(&styled_prompt);
-        }
-        let plain_prompt = strip_ansi(&styled_prompt);
-        match editor.readline(&plain_prompt) {
+        let prompt_pair = (strip_ansi(&styled_prompt), styled_prompt);
+        match editor.readline(&prompt_pair) {
             Ok(line) => {
                 if line.trim().is_empty() && buffer.is_empty() {
                     continue;
@@ -420,7 +393,7 @@ fn render_prompt(rt: &mut runtime::Runtime) -> String {
 }
 
 /// Strip ANSI escape sequences so rustyline computes the right cursor
-/// column; the styled form is re-attached by `highlight_prompt`.
+/// column; the styled form is passed alongside via the `Prompt` trait.
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
