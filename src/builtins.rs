@@ -640,14 +640,69 @@ fn color_code(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Owned SGR code for `colorNNN` (256-color palette).
+/// Owned SGR code for `colorNNN` (256-color palette) or a 6-digit hex
+/// color like `08A283` (fish accepts hex; mapped to the 256-color cube
+/// like fish does).
 fn color_code_owned(name: &str) -> Option<String> {
-    let digits = name.strip_prefix("color")?;
-    if !digits.is_empty() && digits.len() <= 3 && digits.bytes().all(|b| b.is_ascii_digit()) {
-        Some(format!("38;5;{digits}"))
-    } else {
-        None
+    if let Some(digits) = name.strip_prefix("color")
+        && !digits.is_empty()
+        && digits.len() <= 3
+        && digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Some(format!("38;5;{digits}"));
     }
+    hex_to_256(name).map(|idx| format!("38;5;{idx}"))
+}
+
+/// Map a 6-digit hex color to the nearest xterm-256 index, mirroring
+/// fish's conversion (6x6x6 cube + gray ramp).
+fn hex_to_256(hex: &str) -> Option<u8> {
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    // xterm 256-color cube: levels 0,95,135,175,215,255
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let nearest = |v: u8| {
+        let mut best = 0;
+        let mut best_d = u16::MAX;
+        for (i, l) in LEVELS.iter().enumerate() {
+            let d = (v as i16 - *l as i16).unsigned_abs();
+            if d < best_d {
+                best_d = d;
+                best = i;
+            }
+        }
+        best
+    };
+    let (ri, gi, bi) = (nearest(r), nearest(g), nearest(b));
+    // Gray ramp (indices 232-255) is closer for near-gray colors.
+    let gray = (r as u16 + g as u16 + b as u16) / 3;
+    let gray_idx = if gray <= 8 {
+        232
+    } else if gray >= 248 {
+        255
+    } else {
+        232 + ((gray - 8) as f64 / 10.0).round() as u8
+    };
+    let cube = 16 + 36 * ri + 6 * gi + bi;
+    let cube_err = (r as i16 - LEVELS[ri] as i16).unsigned_abs()
+        + (g as i16 - LEVELS[gi] as i16).unsigned_abs()
+        + (b as i16 - LEVELS[bi] as i16).unsigned_abs();
+    const GRAY_LEVELS: [u8; 24] = [
+        8, 18, 28, 38, 48, 58, 68, 78, 88, 98, 108, 118, 128, 138, 148, 158, 168, 178, 188, 198,
+        208, 218, 228, 238,
+    ];
+    let gray_err = (r as i16 - GRAY_LEVELS[(gray_idx - 232) as usize] as i16).unsigned_abs()
+        + (g as i16 - GRAY_LEVELS[(gray_idx - 232) as usize] as i16).unsigned_abs()
+        + (b as i16 - GRAY_LEVELS[(gray_idx - 232) as usize] as i16).unsigned_abs();
+    Some(if gray_err < cube_err {
+        gray_idx
+    } else {
+        cube as u8
+    })
 }
 
 fn set_color(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
@@ -928,6 +983,14 @@ mod tests {
             Some(BuiltinResult::Done { out: Some(out), .. }) => out,
             other => panic!("expected Done with output, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn set_color_hex_six_digits_maps_to_256() {
+        let mut rt = Runtime::new();
+        assert_eq!(out_of(&mut rt, "set_color", &["08A283"]), b"\x1b[38;5;36m");
+        assert_eq!(out_of(&mut rt, "set_color", &["ff0000"]), b"\x1b[38;5;196m");
+        assert_eq!(status_of(&mut rt, "set_color", &["notacolor"]), 1);
     }
 
     #[test]
