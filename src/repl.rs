@@ -25,12 +25,25 @@ type FushEditor = Reedline;
 /// like the rustyline implementation did.
 struct HostHistory {
     inner: Box<dyn History>,
+    /// When false (default), reedline's automatic save of the raw
+    /// submitted line is suppressed. The REPL loop sets this to true for
+    /// its own `push_history` call with the abbreviation-expanded line.
+    allow_save: bool,
 }
 
 impl History for HostHistory {
     fn save(&mut self, h: HistoryItem) -> reedline::Result<HistoryItem> {
-        // Suppress: the loop calls save() itself with the expanded line.
-        Ok(h)
+        if h.command_line.is_empty() {
+            // Marker save from push_history: arm the next save.
+            self.allow_save = true;
+            return Ok(h);
+        }
+        if !self.allow_save {
+            // Suppress reedline's auto-save of the raw line.
+            return Ok(h);
+        }
+        self.allow_save = false;
+        self.inner.save(h)
     }
     fn load(&self, id: reedline::HistoryItemId) -> reedline::Result<HistoryItem> {
         self.inner.load(id)
@@ -388,7 +401,15 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
             ColumnarMenu::default().with_name("completion_menu"),
         )));
     if let Some(history) = history_box {
-        editor = editor.with_history(Box::new(HostHistory { inner: history }));
+        editor = editor.with_history(Box::new(HostHistory {
+            inner: history,
+            allow_save: false,
+        }));
+        // Keep a handle so push_history can re-enable saves for the
+        // expanded line (reedline suppresses nothing on its own; our
+        // wrapper needs the flag flipped per intentional save).
+        // Safety-free: we reach the wrapper via history_mut() and a marker.
+        HOST_HISTORY_IS_WRAPPER.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     // TAB opens the completion menu (first press inserts the common
     // prefix / single match, further presses cycle), matching the previous
@@ -482,7 +503,19 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
     }
 }
 
+static HOST_HISTORY_IS_WRAPPER: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn push_history(editor: &mut FushEditor, line: &str) {
+    if HOST_HISTORY_IS_WRAPPER.load(std::sync::atomic::Ordering::Relaxed) {
+        // Use the same trick reedline's session API uses: a marker in the
+        // command line is not possible, so instead flip the flag through a
+        // special save of an empty item first — no simpler channel exists.
+        // (See allow_save on HostHistory; set via this two-step save.)
+        let _ = editor
+            .history_mut()
+            .save(HistoryItem::from_command_line(""));
+    }
     let _ = editor
         .history_mut()
         .save(HistoryItem::from_command_line(line));

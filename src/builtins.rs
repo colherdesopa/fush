@@ -854,45 +854,56 @@ fn fish_add_path(rt: &mut Runtime, args: &[String]) -> BuiltinResult {
 /// replaces fush.exe (closing a running fush first) and refreshes the
 /// Windows Terminal profile.
 fn update(_rt: &mut Runtime, args: &[String]) -> BuiltinResult {
-    const USAGE: &str = "usage: update [--check]";
-    if args.len() > 1 || !args.iter().all(|a| a == "--check") {
+    const USAGE: &str = "usage: update [--check] [--force]";
+    let force = args.iter().any(|a| a == "--force");
+    if args.iter().any(|a| a != "--check" && a != "--force") || args.len() > 2 {
         return err(USAGE);
     }
-    if args.first().map(|a| a.as_str()) == Some("--check") {
-        // Print the latest release tag and whether the running binary is
-        // older. Read-only network call.
-        let current = env!("CARGO_PKG_VERSION");
-        println!("current: v{current}");
-        match latest_tag() {
-            Ok(tag) => {
-                println!("latest:  {tag}");
-                let newer = tag
-                    .trim_start_matches('v')
-                    .split('.')
-                    .map(|p| p.parse::<u64>().unwrap_or(0))
-                    .collect::<Vec<_>>();
-                let mine = current
-                    .split('.')
-                    .map(|p| p.parse::<u64>().unwrap_or(0))
-                    .collect::<Vec<_>>();
-                if newer > mine {
-                    println!("update available");
-                    BuiltinResult::Done {
-                        status: 0,
-                        out: None,
-                    }
-                } else {
-                    println!("up to date");
-                    BuiltinResult::Done {
-                        status: 0,
-                        out: None,
-                    }
-                }
+    let current = env!("CARGO_PKG_VERSION");
+    // Check the latest version first; only reinstall when actually
+    // outdated (or --force).
+    let tag = match latest_tag() {
+        Ok(t) => t,
+        Err(e) => {
+            // Offline or API problem: fall back to a plain install
+            // attempt rather than refusing to update.
+            if force {
+                return run_installer();
             }
-            Err(e) => err(&format!("fush: update: {e}")),
+            return err(&format!("fush: update: {e}"));
         }
-    } else {
+    };
+    let newer = tag
+        .trim_start_matches('v')
+        .split('.')
+        .map(|p| p.parse::<u64>().unwrap_or(0))
+        .collect::<Vec<u64>>();
+    let mine = current
+        .split('.')
+        .map(|p| p.parse::<u64>().unwrap_or(0))
+        .collect::<Vec<u64>>();
+    let outdated = newer > mine;
+    if args.first().map(|a| a.as_str()) == Some("--check") {
+        println!("current: v{current}");
+        println!("latest:  {tag}");
+        if outdated {
+            println!("update available");
+        }
+        BuiltinResult::Done {
+            status: 0,
+            out: None,
+        }
+    } else if outdated || force {
+        if force {
+            println!("forcing reinstall over v{current}...");
+        }
         run_installer()
+    } else {
+        println!("fush v{current} is up to date");
+        BuiltinResult::Done {
+            status: 0,
+            out: None,
+        }
     }
 }
 

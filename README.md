@@ -26,9 +26,10 @@ irm https://raw.githubusercontent.com/colherdesopa/fush/main/installer/install.p
 
 Options: `-NoWT` (skip Windows Terminal profile), `-NoPath` (skip PATH).
 
-Updating from inside fush: run `update` (re-runs the installer for the
-latest release), or `update --check` to just print the current/latest
-version.
+Updating from inside fush: run `update` — it checks the latest release
+first and only reinstalls when your copy is older (`update --force`
+reinstalls anyway). `update --check` just prints current/latest
+versions.
 
 ## Why
 
