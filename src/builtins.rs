@@ -750,7 +750,11 @@ fn prompt_pwd(_rt: &mut Runtime, _args: &[String]) -> BuiltinResult {
     let cwd = std::env::current_dir()
         .map(|p| crate::runtime::strip_verbatim_prefix(&p.to_string_lossy()))
         .unwrap_or_else(|_| ".".to_string());
-    let home = std::env::var("HOME").ok();
+    // On Windows HOME is often unset; fall back to USERPROFILE like fish.
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var("USERPROFILE").ok());
     let out = prompt_pwd_format(&cwd, home.as_deref());
     BuiltinResult::Done {
         status: 0,
@@ -997,7 +1001,11 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         let expected = prompt_pwd_format(
             &crate::runtime::strip_verbatim_prefix(&cwd.to_string_lossy()),
-            std::env::var("HOME").ok().as_deref(),
+            std::env::var("HOME")
+                .ok()
+                .filter(|h| !h.is_empty())
+                .or_else(|| std::env::var("USERPROFILE").ok())
+                .as_deref(),
         );
         assert_eq!(text, format!("{expected}\n"));
     }
