@@ -21,7 +21,35 @@ if (-not (Test-Path $backup)) {
     Copy-Item $SettingsPath $backup
 }
 
-$json = Get-Content $SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$raw = Get-Content $SettingsPath -Raw -Encoding UTF8
+# settings.json is JSONC: strip // and /* */ comments outside strings, plus trailing commas,
+# because Windows PowerShell 5.1 ConvertFrom-Json rejects them.
+$clean = New-Object System.Text.StringBuilder
+$inString = $false
+$inLineComment = $false
+$inBlockComment = $false
+$i = 0
+while ($i -lt $raw.Length) {
+    $c = $raw[$i]
+    $next = if ($i + 1 -lt $raw.Length) { $raw[$i + 1] } else { '' }
+    if ($inLineComment) {
+        if ($c -eq "`n") { $inLineComment = $false; [void]$clean.Append($c) }
+    }
+    elseif ($inBlockComment) {
+        if ($c -eq '*' -and $next -eq '/') { $inBlockComment = $false; $i++ }
+    }
+    elseif ($inString) {
+        [void]$clean.Append($c)
+        if ($c -eq '\') { if ($i + 1 -lt $raw.Length) { [void]$clean.Append($raw[$i + 1]); $i++ } }
+        elseif ($c -eq '"') { $inString = $false }
+    }
+    elseif ($c -eq '/' -and $next -eq '/') { $inLineComment = $true; $i++ }
+    elseif ($c -eq '/' -and $next -eq '*') { $inBlockComment = $true; $i++ }
+    elseif ($c -eq '"') { $inString = $true; [void]$clean.Append($c) }
+    else { [void]$clean.Append($c) }
+    $i++
+}
+$json = ([regex]::Replace($clean.ToString(), ',(\s*[}\]])', '$1')) | ConvertFrom-Json
 
 if ($Remove) {
     if ($json.profiles.list) {
