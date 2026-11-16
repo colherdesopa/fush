@@ -236,6 +236,13 @@ fn cached_entry(name: &str) -> Option<bool> {
 fn classify_token(raw: &str, command_pos: bool) -> Style {
     let bare = strip_outer_quotes(raw);
 
+    // Single source of truth for "is this a command fush knows": the
+    // builtin dispatch table, so new builtins highlight correctly too.
+    #[must_use]
+    fn is_builtin_name(name: &str) -> bool {
+        crate::builtins::run(&mut crate::runtime::Runtime::new(), name, &[]).is_some()
+    }
+
     if raw.starts_with('$') {
         return Style::Cyan;
     }
@@ -253,7 +260,7 @@ fn classify_token(raw: &str, command_pos: bool) -> Style {
     }
 
     if command_pos {
-        if matches!(bare, "set" | "echo" | "cd" | "exit" | "test") || is_external(bare) {
+        if is_builtin_name(bare) || is_external(bare) {
             return Style::Bold;
         }
         return Style::Red;
