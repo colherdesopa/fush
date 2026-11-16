@@ -31,6 +31,18 @@ pub fn config_dir_for(
     Some(dir)
 }
 
+/// Fish config path: `<base>/.config/fish/config.fish` (not the fush dir).
+pub fn fish_config_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let userprofile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    let base = if cfg!(windows) {
+        userprofile.or(home)?
+    } else {
+        home?
+    };
+    Some(base.join(".config").join("fish").join("config.fish"))
+}
+
 pub fn config_path() -> Option<PathBuf> {
     let dir = config_dir()?;
     Some(dir.join("config.fish"))
@@ -76,7 +88,7 @@ pub fn fish_config_file() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("FUSH_FISH_CONFIG") {
         return Some(PathBuf::from(p));
     }
-    config_path()
+    fish_config_path()
 }
 
 /// Source the primary config (`config.fush`) into `rt`. Missing file is
@@ -408,7 +420,8 @@ mod first_run_tests {
         assert_eq!(fish_config_file(), Some(custom.clone()));
         // SAFETY: tests in this module run single-threaded.
         unsafe { std::env::remove_var("FUSH_FISH_CONFIG") };
-        assert_eq!(fish_config_file(), config_path());
+        // Default fish config lives under .config/fish/, not the fush dir.
+        assert_eq!(fish_config_file(), fish_config_path());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
