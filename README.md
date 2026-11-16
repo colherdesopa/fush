@@ -14,6 +14,14 @@ Profiles ship: `fush --profile NAME` loads `<config_dir>/profiles/NAME.fush` bef
 
 The release channel is live: pushing a `v*` tag builds a signed-off GitHub release with `fush.exe` (zip), a per-user Inno Setup installer (`fush-setup-<version>.exe`, optional Windows Terminal profile/default and PATH task), and a `SHA256SUMS` file. CI runs fmt, clippy and the full test suite on Linux, and the suite plus a GNU release build on Windows, on every push.
 
+Quick install on Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/colherdesopa/fush/main/installer/install.ps1 | iex
+```
+
+Options: `-NoWT` (skip Windows Terminal profile), `-NoPath` (skip PATH).
+
 ## Why
 
 fish is the friendliest shell ever built, but on Windows it only exists inside
