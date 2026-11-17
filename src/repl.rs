@@ -5,7 +5,7 @@ use reedline::{
     HistoryItem, Prompt, PromptEditMode, PromptHistorySearch, Reedline, ReedlineMenu, Signal, Span,
     StyledText, Suggestion,
 };
-use reedline::{Highlighter, Hinter, MenuBuilder};
+use reedline::{Highlighter, Hinter};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
@@ -397,8 +397,10 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
         .with_completer(Box::new(FushCompleter {
             helper: helper.clone(),
         }))
+        // Name must match the Tab binding below. ColumnarMenu::default() is
+        // already named "columnar_menu" (with_name is not public).
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(
-            ColumnarMenu::default().with_name("completion_menu"),
+            ColumnarMenu::default(),
         )));
     if let Some(history) = history_box {
         editor = editor.with_history(Box::new(HostHistory {
@@ -411,19 +413,22 @@ pub fn run_repl(profile: Option<Option<String>>) -> i32 {
         // Safety-free: we reach the wrapper via history_mut() and a marker.
         HOST_HISTORY_IS_WRAPPER.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    // TAB opens the completion menu (first press inserts the common
-    // prefix / single match, further presses cycle), matching the previous
-    // TAB behavior as closely as reedline allows.
+    // TAB completes inline, fish-style. quick_completions must stay OFF:
+    // with it on, TAB on a unique match fires ReedlineEvent::Enter, which
+    // ran commands without the user pressing Enter (the v0.2.5 bug).
+    // partial_completions inserts the common prefix of the matches instead.
+    // The menu is a listing, not a trap: printable keys are inserted
+    // normally while it is open.
     let mut keybindings = reedline::default_emacs_keybindings();
     keybindings.add_binding(
         reedline::KeyModifiers::NONE,
         reedline::KeyCode::Tab,
-        reedline::ReedlineEvent::UntilFound(vec![
-            reedline::ReedlineEvent::Menu("completion_menu".to_string()),
-            reedline::ReedlineEvent::MenuNext,
-        ]),
+        reedline::ReedlineEvent::Menu("columnar_menu".to_string()),
     );
-    editor = editor.with_edit_mode(Box::new(reedline::Emacs::new(keybindings)));
+    editor = editor
+        .with_quick_completions(false)
+        .with_partial_completions(true)
+        .with_edit_mode(Box::new(reedline::Emacs::new(keybindings)));
 
     let mut rt = runtime::Runtime::new();
     rt.interactive = true;

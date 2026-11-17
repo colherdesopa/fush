@@ -11,6 +11,28 @@ pub enum BuiltinResult {
 
 const SET_USAGE: &str = "usage: set [-l | -U | -x] [-e] VARNAME [VALUES...]";
 
+/// Every builtin name, kept next to `run` so the two cannot drift:
+/// `test_builtin_names_match_dispatch` fails the build if they diverge.
+pub const BUILTIN_NAMES: &[&str] = &[
+    "set",
+    "echo",
+    "cd",
+    "exit",
+    "test",
+    "functions",
+    "return",
+    "abbr",
+    "true",
+    "false",
+    "complete",
+    "profile",
+    "status",
+    "set_color",
+    "prompt_pwd",
+    "fish_add_path",
+    "update",
+];
+
 /// Dispatch to a builtin by name. `args` excludes the builtin name.
 pub fn run(rt: &mut Runtime, name: &str, args: &[String]) -> Option<BuiltinResult> {
     match name {
@@ -986,6 +1008,18 @@ fn err(msg: &str) -> BuiltinResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_names_match_dispatch() {
+        // Every listed name must dispatch (not fall through to None), and
+        // the dispatch must not know a name the list forgot.
+        for name in BUILTIN_NAMES {
+            assert!(
+                run(&mut Runtime::new(), name, &[]).is_some(),
+                "{name} is listed in BUILTIN_NAMES but not dispatched in run()"
+            );
+        }
+    }
 
     #[test]
     fn profile_builtin_accumulates_allows() {

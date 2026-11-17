@@ -1,19 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub const BUILTIN_NAMES: &[&str] = &[
-    "set",
-    "echo",
-    "cd",
-    "exit",
-    "test",
-    "functions",
-    "return",
-    "abbr",
-    "true",
-    "false",
-    "complete",
-];
+pub use crate::builtins::BUILTIN_NAMES;
 
 const WORD_DELIMITERS: &[char] = &[' ', '\t', '\n', '\r', ';', '|', '&', '(', ')', '<', '>'];
 
